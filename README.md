@@ -1,12 +1,11 @@
-# 🌅 Rise Tech ViewSuite
+# 🌅 Rise Tech Tools
 
-Pacote de **views personalizadas** da [Rise Tech](https://risetech.com.br) para aplicações Laravel.  
-Inclui templates para **páginas de erro**, **layouts base** e **templates de e-mail**, totalmente prontos para uso e personalização.
+Pacote de **macros e helpers** da [Rise Tech](https://risetech.com.br) para aplicações Laravel.  
 
 > Compatível com **Laravel 12+** e **PHP 8.3+**
 
-[![Packagist Version](https://img.shields.io/packagist/v/risetechapps/view-suite.svg?color=00bfa5)](https://packagist.org/packages/risetechapps/view-suite)
-[![License](https://img.shields.io/github/license/risetechapps/view-suite.svg?color=00bfa5)](LICENSE)
+[![Packagist Version](https://img.shields.io/packagist/v/risetechapps/view-suite.svg?color=00bfa5)](https://packagist.org/packages/risetechapps/risetools)
+[![License](https://img.shields.io/github/license/risetechapps/risetools.svg?color=00bfa5)](LICENSE)
 [![PHP Version](https://img.shields.io/badge/PHP-8.3-blue.svg)](https://www.php.net/)
 [![Laravel](https://img.shields.io/badge/Laravel-12.x-red.svg)](https://laravel.com)
 
@@ -17,7 +16,7 @@ Inclui templates para **páginas de erro**, **layouts base** e **templates de e-
 ### Via Composer
 
 ```bash
-  composer require risetechapps/view-suite
+  composer require risetechapps/risetools
 ```
 
 ---
@@ -27,81 +26,7 @@ Inclui templates para **páginas de erro**, **layouts base** e **templates de e-
 O pacote é automaticamente registrado pelo Laravel através do *Service Provider*:
 
 ```php
-RiseTechApps\ViewSuite\ViewSuiteServiceProvider::class
-```
-
-Se quiser publicar as views para customizar no seu projeto, rode:
-
-```bash
-  php artisan vendor:publish --provider="RiseTechApps\ViewSuite\ViewSuiteServiceProvider" --tag=views
-```
-
-As views serão copiadas para:
-
-```
-resources/views/vendor/view-suite/
-```
-
----
-
-## 🧱 Estrutura das Views
-
-```
-resources/
-└── views/
-    └── vendor/
-        └── view-suite/
-            ├── layouts/
-            │   └── base.blade.php
-            ├── errors/
-            │   ├── 404.blade.php
-            │   └── 500.blade.php
-            └── emails/
-                ├── welcome.blade.php
-                └── reset.blade.php
-```
-
----
-
-## 🖼️ Uso
-
-### Exibir uma view de erro
-
-```php
-return response()->view('view-suite::errors.404', [], 404);
-```
-
-### Enviar um e-mail com o template do pacote
-
-```php
-Mail::send('view-suite::emails.welcome', ['user' => $user], function ($message) use ($user) {
-    $message->to($user->email)->subject('Bem-vindo à Rise Tech!');
-});
-```
-
-### Usar o layout base
-
-```blade
-@extends('view-suite::layouts.base')
-
-@section('content')
-  <p>Conteúdo da sua página customizada.</p>
-@endsection
-```
-
----
-
-## 🧩 Personalização
-
-As views publicadas podem ser totalmente alteradas conforme a identidade visual do seu projeto.  
-Basta editar os arquivos em `resources/views/vendor/view-suite/`.
-
-Exemplo de footer padrão:
-
-```blade
-<footer>
-  <p>Powered by <strong>Rise Tech</strong> 🚀</p>
-</footer>
+RiseTechApps\RiseTools\RiseToolsServiceProvider::class
 ```
 
 ---
