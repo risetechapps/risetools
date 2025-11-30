@@ -1,7 +1,13 @@
 # Changelog
 
-All notable changes to `view-suite` will be documented in this file
+Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
+O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
-## 1.0.0 - 2025-11-11
 
-- Lançamento da primeira versão
+## [1.1.0] - 2025-11-30
+### Added
+- Implementado função para gerar imagens avatar para o perfil.
+- 
+## [1.0.0] - 2025-11-11
+### Added
+- Lançamento inicial (Primeira versão estável).
