@@ -8,3 +8,10 @@ if (!function_exists('avatarGenerator')) {
         return app(\RiseTechApps\RiseTools\Features\AvatarGenerator\AvatarGenerator::class);
     }
 }
+
+if (!function_exists('MaskInput')) {
+    function MaskInput(string $value, string $mask): string
+    {
+        return (new \RiseTechApps\RiseTools\Features\MaskInput\MaskInput)->MaskInput($value, $mask);
+    }
+}
