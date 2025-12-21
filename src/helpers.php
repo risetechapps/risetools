@@ -15,3 +15,11 @@ if (!function_exists('MaskInput')) {
         return (new \RiseTechApps\RiseTools\Features\MaskInput\MaskInput)->MaskInput($value, $mask);
     }
 }
+
+if (!function_exists("domainTools")) {
+
+    function domainTools(string $domain): \RiseTechApps\RiseTools\Features\Domain\Domain
+    {
+        return new RiseTechApps\RiseTools\Features\Domain\Domain($domain);
+    }
+}
