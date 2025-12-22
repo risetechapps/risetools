@@ -128,7 +128,7 @@ A macro `jsonBase` é a implementação interna utilizada por todas as outras ma
 
 ---
 
-# 🎨 AvatarGenerator (Novo Recurso)
+# 🎨 AvatarGenerator
 
 O **AvatarGenerator** permite gerar imagens de avatar totalmente automáticas com:
 
@@ -215,6 +215,275 @@ As iniciais são extraídas automaticamente:
 
 ---
 
+# MaskInput
+
+O **MaskInput** permite **aplicar máscaras em strings**,  ideal para CPF, CNPJ, telefone, CEP e outros formatos personalizados.
+
+### Utilizando a classe `MaskInput`
+
+```php
+use RiseTechApps\RiseTools\Features\MaskInput\MaskInput;
+
+$maskInput = new MaskInput();
+
+$result = $maskInput->MaskInput('12345678901', '###.###.###-##');
+
+echo $result;
+// 123.456.789-01
+
+echo mask_input('12345678901', '###.###.###-##');
+// 123.456.789-01
+```
+---
+
+## 🧩 Como funciona
+
+- O caractere `#` representa um valor dinâmico
+- Qualquer outro caractere na máscara é inserido automaticamente
+- A máscara é aplicada da esquerda para a direita
+- Valores excedentes são ignorados
+
+### Parâmetros
+
+| Parâmetro | Tipo | Descrição |
+|---------|------|----------|
+| `$value` | string | Valor sem máscara |
+| `$mask` | string | Máscara desejada |
+
+---
+
+# Device
+O utilitário para **detecção de informações do dispositivo, navegador, plataforma e geolocalização por IP** em aplicações Laravel.
+
+Este recurso utiliza o pacote `hisorange/browser-detect` para identificar o ambiente do usuário e a API pública `ip-api.com` para dados de geolocalização.
+
+---
+
+## 🚀 Uso
+
+### Obtendo informações do dispositivo
+
+```php
+use RiseTechApps\RiseTools\Features\Device\Device;
+
+$info = Device::info();
+
+dd($info);
+```
+---
+
+## 📌 Retorno do método `info()`
+
+O método retorna um array com as seguintes informações:
+
+```php
+[
+    'device' => 'Desktop | Mobile | Tablet | Bot | Unknown',
+    'browser' => 'Chrome | Safari | Firefox | Edge | Opera | IE | webView | Unknown',
+    'browser_name' => 'Nome completo do navegador',
+    'platformName' => 'Windows | Android | iOS | Linux | MacOS | etc',
+    'geo_ip' => [
+        'status' => '',
+        'country' => '',
+        'countryCode' => '',
+        'region' => '',
+        'regionName' => '',
+        'city' => '',
+        'zip' => '',
+        'lat' => '',
+        'lon' => '',
+        'timezone' => '',
+        'isp' => '',
+        'org' => '',
+        'as' => '',
+        'query' => '',
+    ]
+]
+```
+
+---
+
+## 🌍 Geolocalização por IP
+
+A geolocalização é obtida através do serviço público:
+
+- **ip-api.com**
+
+⚠️ Observação:
+- O serviço possui limites de requisição
+- Não recomendado para uso crítico ou de alta escala sem cache
+
+---
+
+## 🧠 Detecção de IP do Cliente
+
+O método tenta identificar corretamente o IP público considerando:
+
+- Cloudflare (`HTTP_CF_CONNECTING_IP`)
+- Proxy reverso (`X-Forwarded-For`)
+- IP real (`REMOTE_ADDR`)
+- Fallback para `request()->ip()`
+
+---
+
+## 🧪 Métodos Disponíveis
+
+```php
+Device::info(): array
+Device::getClientPublicIp(): ?string
+```
+
+---
+
+# Domain
+
+Package utilitário para **análise e obtenção de informações de domínios**, incluindo subdomínio, IP, registros DNS, SSL, status de publicação e dados WHOIS.
+
+Este recurso faz parte do ecossistema **RiseTools** e foi projetado para uso em aplicações Laravel.
+
+---
+
+## 📦 Instalação
+
+Instale as dependências necessárias via Composer:
+
+```bash
+composer require spatie/dns jeremykendall/php-domain-parser iodev/whois
+```
+
+> O pacote utiliza a lista oficial do Public Suffix (`publicsuffix.org`).
+
+---
+
+## ⚙️ Requisitos
+
+- PHP **8.0+**
+- Laravel **9+**
+- Extensões PHP:
+    - `openssl`
+    - `dns`
+
+---
+
+## 🚀 Uso Básico
+
+### Criando a instância da classe Domain
+
+```php
+use RiseTechApps\RiseTools\Features\Domain\Domain;
+
+$domain = new Domain('blog.example.com');
+
+$domain = domainTools('blog.example.com');
+```
+
+---
+
+## 📌 Métodos Disponíveis
+
+### Obter domínio principal (registrável)
+
+```php
+$domain->getDomain();
+// example.com
+```
+
+### Obter subdomínio
+
+```php
+$domain->getSubDomain();
+// blog
+```
+
+### Obter IP do domínio
+
+```php
+$domain->getIp();
+// 93.184.216.34
+```
+
+### Obter registros DNS
+
+```php
+$domain->getDnsRecords();
+// Retorna registros A, MX, TXT, CNAME, etc
+```
+
+---
+
+## 🔐 Informações de SSL
+
+```php
+$domain->getSslInfo();
+```
+
+Retorno esperado:
+
+```php
+[
+    'status' => true,
+    'issuer' => 'Let\'s Encrypt',
+    'expires_at' => '2025-01-01 12:00:00',
+    'is_expired' => false
+]
+```
+
+---
+
+## 🌐 Verificações de Domínio
+
+### Verificar se o domínio resolve no DNS
+
+```php
+$domain->isResolvable();
+// true | false
+```
+
+### Verificar se o domínio está publicado
+
+```php
+$domain->isPublished();
+// true | false
+```
+
+---
+
+## 🧾 WHOIS – Data de Expiração
+
+```php
+$domain->getWhoisExpiration();
+// 2026-03-15
+```
+
+> ⚠️ O WHOIS pode falhar dependendo do TLD ou indisponibilidade do servidor.
+
+---
+
+## 📊 Informações Completas do Domínio
+
+```php
+$domain->getInfo();
+```
+
+Retorno:
+
+```php
+[
+    'domain' => 'example.com',
+    'hasSubDomain' => true,
+    'subDomain' => 'blog',
+    'ip' => '93.184.216.34',
+    'dns' => [],
+    'ssl' => [],
+    'resolve' => true,
+    'status' => true,
+    'expires_at' => '2026-03-15'
+]
+```
+
+---
+
+
 ## 🧪 Testes
 
 Este package utiliza o Orchestra Testbench para testes isolados.
@@ -240,6 +509,9 @@ Cobertura:
 | GD + FreeType | required |
 | Orchestra Testbench | 9.x |
 | PHPUnit | 11.x |
+| jeremykendall/php-domain-parser | 6.0 |
+| spatie/dns | 2.7.1 |
+| io-developer/php-whois | 4.1.10 |
 
 ---
 
