@@ -132,9 +132,29 @@ class Domain
         if (empty($records)) {
             return false;
         }
-
-
         return true;
+    }
+
+    /**
+     * Retorna o host completo (subdomínio + domínio) como string.
+     * Exemplo: sub.google.com ou google.com
+     */
+    public function getFullHost(): string
+    {
+        return is_null($this->getSubDomain())
+            ? $this->getDomain()
+            : $this->getSubDomain() . "." . $this->getDomain();
+    }
+
+    /**
+     * Retorna a URL completa com protocolo.
+     * @param string $protocol (http ou https)
+     */
+    public function getUrl(string $protocol = 'http'): string
+    {
+        $protocol = str_replace(['://', '/'], '', $protocol);
+
+        return "{$protocol}://{$this->getFullHost()}";
     }
 
     public function getInfo(): array
