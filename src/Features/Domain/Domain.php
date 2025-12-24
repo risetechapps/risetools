@@ -168,7 +168,9 @@ class Domain
             'ssl' => $this->getSslInfo(),
             'resolve' => $this->isResolvable(),
             'status' => $this->isPublished(),
-            'expires_at' => $this->getWhoisExpiration()
+            'expires_at' => $this->getWhoisExpiration(),
+            'url' => $this->getUrl(),
+            'fullUrl' => $this->getUrl()
         ];
     }
 
