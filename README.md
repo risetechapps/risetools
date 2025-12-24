@@ -357,8 +357,8 @@ composer require spatie/dns jeremykendall/php-domain-parser iodev/whois
 
 ## ⚙️ Requisitos
 
-- PHP **8.0+**
-- Laravel **9+**
+- PHP **8.3+**
+- Laravel **12+**
 - Extensões PHP:
     - `openssl`
     - `dns`
