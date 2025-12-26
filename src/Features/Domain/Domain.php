@@ -20,6 +20,8 @@ class Domain
     public function __construct(string $domain)
     {
 
+        $domain = parse_url($domain, PHP_URL_HOST) ?? $domain;
+
         $this->rules = Rules::fromPath('https://publicsuffix.org/list/public_suffix_list.dat');
 
         $domain = PdpDomain::fromIDNA2008($domain);
