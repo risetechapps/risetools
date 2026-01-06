@@ -176,4 +176,101 @@ class Domain
         ];
     }
 
+    public function isValidMail(string $email)
+    {
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        if (!$this->isResolvable()) {
+            return false;
+        }
+
+        if (!checkdnsrr($this->getDomain(), 'MX')) {
+            return false;
+        }
+
+        $blockedProviders = [
+            'gmail.com',
+            'googlemail.com',
+            'outlook.com',
+            'hotmail.com',
+            'live.com',
+            'yahoo.com',
+            'icloud.com',
+        ];
+
+        if (in_array($this->getDomain(), $blockedProviders, true)) {
+            return true;
+        }
+
+        return $this->smtpRcptCheck($email);
+    }
+
+    protected function smtpRcptCheck(string $email): bool
+    {
+        [$user, $domain] = explode('@', $email, 2);
+
+        getmxrr($domain, $mxHosts);
+        if (empty($mxHosts)) {
+            return false;
+        }
+
+        $mx = $mxHosts[0];
+
+        $fp = @fsockopen($mx, 25, $errno, $errstr, 10);
+        if (!$fp) {
+            return false;
+        }
+
+        stream_set_timeout($fp, 10);
+
+        $read = function () use ($fp) {
+            $data = '';
+            while ($line = fgets($fp, 1024)) {
+                $data .= $line;
+                if (preg_match('/^\d{3} /', $line)) {
+                    break;
+                }
+            }
+            return trim($data);
+        };
+
+        $send = fn ($cmd) => fputs($fp, $cmd . "\r\n");
+
+        $read();
+
+        $send('EHLO risetech.com.br');
+        $read();
+
+        $send('MAIL FROM:<apps@risetech.com.br>');
+        $mailFromResponse = $read();
+
+        if (!str_starts_with($mailFromResponse, '250')) {
+            fclose($fp);
+            return false;
+        }
+
+        $send("RCPT TO:<{$email}>");
+        $rcptResponse = $read();
+
+        $send('QUIT');
+        fclose($fp);
+
+        if (str_starts_with($rcptResponse, '250')) {
+            return true;
+        }
+
+        if (
+            str_contains($rcptResponse, '5.1.1') ||
+            str_contains($rcptResponse, 'User unknown') ||
+            str_contains($rcptResponse, '5.5.1')
+        ) {
+            return false;
+        }
+
+        return true;
+    }
+
+
 }
