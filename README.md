@@ -459,6 +459,13 @@ $domain->getWhoisExpiration();
 
 ---
 
+## 🧾 isValidMail – Validar caixa de email
+
+```php
+$domain->isValidMail($mail);
+// true | false
+```
+
 ## 📊 Informações Completas do Domínio
 
 ```php
