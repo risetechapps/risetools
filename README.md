@@ -483,21 +483,129 @@ Retorno:
 
 ---
 
+# AtomicJobChain
 
-## 🧪 Testes
+O `AtomicJobChain` é uma poderosa classe utilitária do Laravel que permite encadear múltiplos Jobs de forma **atômica** e **sequencial**. Diferente do encadeamento nativo do Laravel, esta implementação oferece um controle mais refinado sobre o fluxo de execução e incorpora os callbacks de sucesso, falha e finalização (`then`, `catch`, `finally`), inspirados no recurso de Batches.
 
-Este package utiliza o Orchestra Testbench para testes isolados.
+## 🌟 Funcionalidades Principais
 
-```bash
-  composer test
+*   **Execução Sequencial Atômica:** Os Jobs são executados um após o outro. A falha em qualquer Job interrompe imediatamente a execução da cadeia.
+*   **Callbacks de Fluxo de Controle:** Suporte a `then()`, `catch()` e `finally()` para reagir ao resultado final da cadeia.
+*   **Integração com Eventos:** Método `toListener()` para fácil despacho da cadeia a partir de Listeners de Eventos.
+*   **Visibilidade no Horizon:** Implementação do `displayName()` para uma visualização clara e descritiva no painel do Laravel Horizon.
+
+## 🚀 Uso
+
+A cadeia é tipicamente construída usando o método estático `make()` e configurada com a *Fluent Interface*.
+
+### 1. Construção e Despacho
+
+O uso mais comum é dentro de um Listener de Eventos, garantindo que a cadeia seja despachada de forma assíncrona.
+
+```php
+use App\Jobs\Database\SeedDatabaseJob;
+use App\Jobs\SubTenant\CreateSubTenantDefaultJob;
+use App\Events\Database\DatabaseMigratedEvent;
+use RiseTechApps\RiseTools\Features\AtomicJobChain\AtomicJobChain;
+
+// Dentro de um EventServiceProvider ou Listener
+Event::listen(DatabaseMigratedEvent::class, function (DatabaseMigratedEvent $event) {
+    
+    AtomicJobChain::make([
+        SeedDatabaseJob::class,
+        CreateSubTenantDefaultJob::class,
+        // ... adicione quantos Jobs forem necessários
+    ])
+    // Transforma o evento em um objeto passável para os Jobs internos
+    ->send(function (DatabaseMigratedEvent $event) {
+        $event->tenancy->refresh();
+        return $event->tenancy; // O objeto retornado será passado para os Jobs
+    })
+    ->shouldBeQueued(true) // Garante que a cadeia será enfileirada
+    ->toListener(); // Retorna a Closure que o Laravel usa para despachar o Job
+});
 ```
 
-Cobertura:
+### 2. Utilizando Callbacks (`then`, `catch`, `finally`)
 
-```bash
-  composer test-coverage
+Os callbacks permitem que você execute ações após a conclusão ou falha da cadeia.
+
+| Método | Descrição | Argumentos Recebidos |
+| :--- | :--- | :--- |
+| `->then(callable $callback)` | Executado se **todos** os Jobs na cadeia forem concluídos com sucesso. | Nenhum |
+| `->catch(callable $callback)` | Executado se **qualquer** Job na cadeia falhar. | `Throwable $exception` (a exceção que causou a falha) |
+| `->finally(callable $callback)` | Executado **sempre** ao final da execução, independente do resultado. | Nenhum |
+
+**Exemplo:**
+
+```php
+AtomicJobChain::make([...])
+    ->send([...])
+    ->then(function () {
+        // Notifica o sucesso da operação
+        Log::info('Cadeia de Jobs concluída com sucesso!');
+    })
+    ->catch(function (Throwable $e) {
+        // Registra a falha e a exceção
+        Log::error('A cadeia falhou: ' . $e->getMessage());
+    })
+    ->finally(function () {
+        // Executa a limpeza ou notificação final
+        Cache::forget('chain_running_flag');
+    })
+    ->toListener();
 ```
 
+## 📊 Monitoramento com Laravel Horizon
+
+O `AtomicJobChain` implementa o método `displayName()`, garantindo que o painel do Horizon exiba um nome descritivo em vez do nome da classe.
+
+| Antes | Depois |
+| :--- | :--- |
+| `RiseTechApps\RiseTools\Features\AtomicJobChain\AtomicJobChain` | `Atomic Chain: SeedDatabaseJob, CreateSubTenantDefaultJob, ...` |
+
+### Rastreamento de Falhas
+
+Em caso de falha, o Horizon registrará o Job pai (`AtomicJobChain`) como falho. A exceção será encapsulada para indicar **qual Job interno** causou a interrupção, facilitando a depuração:
+
+> **Exception:** `Job [App\Jobs\Database\SeedDatabaseJob] failed: SQLSTATE[HY000]: General error: ...`
+
+Isso elimina a necessidade de vasculhar o Stack Trace para identificar o ponto exato da falha.
+
+## 🛠️ Detalhes Técnicos
+
+A classe utiliza a interface `ShouldQueue` e garante a atomicidade da execução no método `handle()`.
+
+```php
+// Trecho do método handle()
+try {
+    // ... execução do Job interno
+} catch (Throwable $exception) {
+    $hasFailed = true;
+    
+    // Executa o callback de falha
+    if ($this->onFailure) {
+        app()->call($this->onFailure, ['exception' => $exception]);
+    }
+    
+    // Lança a exceção encapsulada para o Horizon
+    throw $wrapperException; 
+}
+// ...
+```
+
+O uso de `DB::afterCommit()` no método `toListener()` garante que a cadeia de Jobs só seja despachada para a fila **após** o commit de qualquer transação de banco de dados ativa, prevenindo problemas de concorrência.
+
+```php
+// Trecho do método toListener()
+if (DB::transactionLevel() > 0) {
+    DB::afterCommit(function () use ($executable) {
+        dispatch($executable);
+    });
+} else {
+    dispatch($executable);
+}
+```
 ---
 
 ## 🛠️ Requisitos
