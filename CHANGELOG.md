@@ -3,6 +3,10 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [1.7.0] - 2026-02-03
+### Added
+- Corrigido incompatibilidade de variável
+
 ## [1.6.0] - 2026-01-24
 ### Added
 - Class AtomicJobChain foi implementado suporte para callback de onSuccess, onFailure e onFinally
