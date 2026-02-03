@@ -214,7 +214,7 @@ class AtomicJobChain implements ShouldQueue
                     // Loga a execução no console (útil para workers)
                     if (app()->runningInConsole()) {
                         $date = now();
-                        $output->writeln("<info>  ${date} - Running JOB: " . get_class($job[0]) . "</info>");
+                        $output->writeln("<info>  {$date} - Running JOB: " . get_class($job[0]) . "</info>");
                     }
 
                     // Executa o Job
