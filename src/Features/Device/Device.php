@@ -6,18 +6,30 @@ use GuzzleHttp\Client;
 
 class Device
 {
+    private static ?array $cached = null;
+
     public static function info(): array
     {
         try {
+
+            if (self::$cached !== null) {
+                return self::$cached;
+            }
+
             $class = (new \hisorange\BrowserDetect\Parser())
                 ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
-            return [
+
+            $result =  [
                 'device' => static::getTypeDevice($class),
                 'browser' => static::getTypeBrowser($class),
                 'browser_name' => static::getTypeBrowserName($class),
                 'platformName' => static::getPlatformName($class),
                 'geo_ip' => static::getGeoIP($class)
             ];
+
+            self::$cached = $result;
+            return self::$cached;
+
         } catch (\Exception $e) {
             return [];
         }
