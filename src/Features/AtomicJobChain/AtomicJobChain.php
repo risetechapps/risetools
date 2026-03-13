@@ -6,6 +6,7 @@ use Closure;
 use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
+use Laravel\SerializableClosure\SerializableClosure;
 use Symfony\Component\Console\Exception\MissingInputException;
 use Symfony\Component\Console\Output\ConsoleOutput;
 use Throwable;
@@ -86,6 +87,15 @@ class AtomicJobChain implements ShouldQueue
      */
     public $onFinally;
 
+
+    /**
+     * Callback executado após cada Job completar com sucesso.
+     * Recebe: (string $jobClass, mixed $passable)
+     *
+     * @var callable|null
+     */
+    public $onStepComplete;
+
     /**
      * Construtor da cadeia de Jobs.
      *
@@ -146,7 +156,9 @@ class AtomicJobChain implements ShouldQueue
      */
     public function then(callable $callback): self
     {
-        $this->onSuccess = $callback;
+        $this->onSuccess = $callback instanceof \Closure
+            ? new SerializableClosure($callback)
+            : $callback;
         return $this;
     }
 
@@ -159,7 +171,9 @@ class AtomicJobChain implements ShouldQueue
      */
     public function catch(callable $callback): self
     {
-        $this->onFailure = $callback;
+        $this->onFailure = $callback instanceof \Closure
+            ? new SerializableClosure($callback)
+            : $callback;
         return $this;
     }
 
@@ -171,7 +185,9 @@ class AtomicJobChain implements ShouldQueue
      */
     public function finally(callable $callback): self
     {
-        $this->onFinally = $callback;
+        $this->onFinally = $callback instanceof \Closure
+            ? new SerializableClosure($callback)
+            : $callback;
         return $this;
     }
 
@@ -182,13 +198,24 @@ class AtomicJobChain implements ShouldQueue
      */
     public function displayName(): string
     {
-        // Mapeia os Jobs para seus nomes de classe base para exibição
-        $jobNames = array_map(function ($job) {
-            return is_string($job) ? class_basename($job) : 'Closure';
-        }, $this->jobs);
+        $total    = count($this->jobs);
+        $jobNames = array_map(
+            fn($job) => is_string($job) ? class_basename($job) : 'Closure',
+            $this->jobs
+        );
 
-        // Retorna um nome descritivo para o Horizon
-        return 'Atomic Chain: ' . implode(', ', $jobNames);
+        return "Atomic Chain ({$total}): " . implode(' → ', $jobNames);
+    }
+
+    /**
+     * Define callback executado após cada Job com sucesso.
+     */
+    public function onStepComplete(callable $callback): self
+    {
+        $this->onStepComplete = $callback instanceof \Closure
+            ? new SerializableClosure($callback)
+            : $callback;
+        return $this;
     }
 
     /**
@@ -208,7 +235,8 @@ class AtomicJobChain implements ShouldQueue
                 try {
                     // Prepara o Job para execução (instancia se for string)
                     if (is_string($job)) {
-                        $job = [new $job(...$this->passable), 'handle'];
+                        $passable = is_array($this->passable) ? $this->passable : (array) $this->passable;
+                        $job = [new $job(...$passable), 'handle'];
                     }
 
                     // Loga a execução no console (útil para workers)
@@ -230,7 +258,14 @@ class AtomicJobChain implements ShouldQueue
                     }
 
                     // Prepara a exceção para o Horizon
-                    $jobClass = is_object($job[0]) ? get_class($job[0]) : $job[0];
+                    $jobClass = match(true) {
+                        is_string($job)                    => $job,
+                        is_array($job) && is_object($job[0]) => get_class($job[0]),
+                        is_array($job)                     => $job[0],
+                        $job instanceof \Closure           => 'Closure',
+                        default                            => 'UnknownJob',
+                    };
+
                     $wrapperException = new \Exception(
                         "Job [{$jobClass}] failed: " . $exception->getMessage(),
                         $exception->getCode(),
@@ -239,7 +274,8 @@ class AtomicJobChain implements ShouldQueue
 
                     // Reporta a exceção e chama o método failed() do Job interno
                     report($wrapperException);
-                    if (method_exists($job[0], 'failed')) {
+
+                    if (is_array($job) && isset($job[0]) && method_exists($job[0], 'failed')) {
                         call_user_func([$job[0], 'failed'], $exception);
                     }
 
@@ -274,8 +310,7 @@ class AtomicJobChain implements ShouldQueue
     public function toListener(): ?Closure
     {
         if (empty($this->jobs)) {
-            return function (...$args) {
-            };
+            return fn(...$args) => null;
         }
 
         return function (...$args) {
@@ -283,14 +318,18 @@ class AtomicJobChain implements ShouldQueue
 
             if ($this->shouldBeQueued) {
                 if (DB::transactionLevel() > 0) {
-                    // Despacha o Job para a fila manualmente após o commit da transação
-                    DB::afterCommit(function () use ($executable) {
-                        dispatch($executable);
-                    });
+                    DB::afterCommit(fn() => dispatch($executable));
                 } else {
-                    // Caso não haja transação, o Job é disparado imediatamente
                     dispatch($executable);
                 }
+                return;
+            }
+
+            // ✅ Executa síncrono quando shouldBeQueued = false
+            if (DB::transactionLevel() > 0) {
+                DB::afterCommit(fn() => $executable->handle());
+            } else {
+                $executable->handle();
             }
         };
     }
@@ -314,5 +353,28 @@ class AtomicJobChain implements ShouldQueue
         $clone->send = null;
 
         return $clone;
+    }
+
+    // ✅ Tags aparecem no Horizon e facilitam debug por tenant
+    public function tags(): array
+    {
+        $tags = ['atomic-chain'];
+
+        // Adiciona o tenant como tag se passable tiver um Model com getKey()
+        $passable = is_array($this->passable) ? $this->passable : [];
+        foreach ($passable as $arg) {
+            if ($arg instanceof \Illuminate\Database\Eloquent\Model) {
+                $tags[] = 'tenant:' . $arg->getKey();
+                break;
+            }
+        }
+
+        foreach ($this->jobs as $job) {
+            if (is_string($job)) {
+                $tags[] = 'job:' . class_basename($job);
+            }
+        }
+
+        return $tags;
     }
 }
