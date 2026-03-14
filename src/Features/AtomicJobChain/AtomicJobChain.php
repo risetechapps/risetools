@@ -225,77 +225,78 @@ class AtomicJobChain implements ShouldQueue
      */
     public function handle(): void
     {
-
-        $output = new ConsoleOutput();
+        $output    = new ConsoleOutput();
         $hasFailed = false;
 
         try {
-            // Itera sobre cada Job na cadeia
             foreach ($this->jobs as $job) {
+
+                // ✅ Resolve o nome ANTES do try — fica correto tanto no
+                // onStepComplete (sucesso) quanto no catch (falha), mesmo
+                // depois que $job é reatribuído de string para [objeto, 'handle']
+                $jobClass = match(true) {
+                    is_string($job)                      => $job,
+                    is_array($job) && is_object($job[0]) => get_class($job[0]),
+                    is_array($job)                       => (string) $job[0],
+                    $job instanceof Closure              => 'Closure',
+                    default                              => 'UnknownJob',
+                };
+
                 try {
-                    // Prepara o Job para execução (instancia se for string)
+                    // Instancia o Job se vier como string de classe
                     if (is_string($job)) {
                         $passable = is_array($this->passable) ? $this->passable : (array) $this->passable;
-                        $job = [new $job(...$passable), 'handle'];
+                        $job      = [new $job(...$passable), 'handle'];
                     }
 
-                    // Loga a execução no console (útil para workers)
                     if (app()->runningInConsole()) {
-                        $date = now();
-                        $output->writeln("<info>  {$date} - Running JOB: " . get_class($job[0]) . "</info>");
+                        $output->writeln("<info>  " . now() . " - Running JOB: {$jobClass}</info>");
                     }
 
-                    // Executa o Job
                     $result = app()->call($job);
 
+                    // ✅ Grava checkpoint após cada Job bem-sucedido —
+                    // qualquer job, interno ou de pacote externo
+                    if ($this->onStepComplete) {
+                        app()->call($this->onStepComplete, [
+                            'jobClass' => $jobClass,
+                            'passable' => is_array($this->passable) ? $this->passable : [],
+                        ]);
+                    }
+
                 } catch (TypeError|Throwable|Exception|MissingInputException $exception) {
-                    // Captura qualquer falha
                     $hasFailed = true;
 
-                    // Executa o callback de falha (catch)
                     if ($this->onFailure) {
                         app()->call($this->onFailure, ['exception' => $exception]);
                     }
 
-                    // Prepara a exceção para o Horizon
-                    $jobClass = match(true) {
-                        is_string($job)                    => $job,
-                        is_array($job) && is_object($job[0]) => get_class($job[0]),
-                        is_array($job)                     => $job[0],
-                        $job instanceof \Closure           => 'Closure',
-                        default                            => 'UnknownJob',
-                    };
-
+                    // $jobClass já está resolvido corretamente acima
                     $wrapperException = new \Exception(
                         "Job [{$jobClass}] failed: " . $exception->getMessage(),
                         $exception->getCode(),
                         $exception
                     );
 
-                    // Reporta a exceção e chama o método failed() do Job interno
                     report($wrapperException);
 
                     if (is_array($job) && isset($job[0]) && method_exists($job[0], 'failed')) {
                         call_user_func([$job[0], 'failed'], $exception);
                     }
 
-                    // Lança a exceção para marcar o Job pai como falho no Horizon
                     throw $wrapperException;
                 }
 
-                // Interrompe a cadeia se o Job retornar explicitamente 'false'
                 if ($result === false) {
                     break;
                 }
             }
 
-            // Se não houve falhas, executa o callback de sucesso (then)
             if (!$hasFailed && $this->onSuccess) {
                 app()->call($this->onSuccess);
             }
 
         } finally {
-            // Executa o callback de finalização (finally) sempre
             if ($this->onFinally) {
                 app()->call($this->onFinally);
             }
