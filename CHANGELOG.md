@@ -3,9 +3,12 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [1.8.2] - 2026-03-17
+- Corrigido falhas de nullable
+
 ## [1.8.1] - 2026-03-17
 - Refatorado classe AtomicJobChain para melhor gerenciamento de jobs e falhas
-- 
+ 
 ## [1.8.0] - 2026-03-13
 - Refatorado classe AtomicJobChain para melhor gerenciamento de jobs e falhas
 
