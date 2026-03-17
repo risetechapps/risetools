@@ -103,7 +103,7 @@ class AtomicJobChain implements ShouldQueue
      * @param callable|null $send Callback para processar argumentos de eventos.
      * @param bool|null $shouldBeQueued Define se deve ser enfileirado.
      */
-    public function __construct($jobs, callable $send = null, bool $shouldBeQueued = null)
+    public function __construct(array $jobs, ?callable $send = null, ?bool $shouldBeQueued = null)
     {
         $this->jobs = $jobs;
         $this->send = $send ?? function ($event) {
