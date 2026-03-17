@@ -31,7 +31,7 @@ class RiseToolsServiceProvider extends ServiceProvider
     protected function registerMacrosResponse(): void
     {
         if (!ResponseFactory::hasMacro('jsonBase')) {
-            ResponseFactory::macro('jsonBase', function (bool $success, string $message = null, array|JsonResource $data = null, int $code = Response::HTTP_OK) {
+            ResponseFactory::macro('jsonBase', function (bool $success, ?string $message = null, array|JsonResource|null $data = null, int $code = Response::HTTP_OK) {
                 $response = [
                     'success' => $success,
                     'code' => $code,
@@ -55,31 +55,31 @@ class RiseToolsServiceProvider extends ServiceProvider
         }
 
         if (!ResponseFactory::hasMacro('jsonSuccess')) {
-            ResponseFactory::macro('jsonSuccess', function (array|JsonResource $data = null, string $message = 'Operation completed successfully.') {
+            ResponseFactory::macro('jsonSuccess', function (array|JsonResource|null $data = null, string $message = 'Operation completed successfully.') {
                 return response()->jsonBase(true, $message, $data, Response::HTTP_OK);
             });
         }
 
         if (!ResponseFactory::hasMacro('jsonError')) {
-            ResponseFactory::macro('jsonError', function (string $message = 'Resource not available.', array|JsonResource $data = null) {
+            ResponseFactory::macro('jsonError', function (string $message = 'Resource not available.', array|JsonResource|null $data = null) {
                 return response()->jsonBase(false, $message, $data, Response::HTTP_UNPROCESSABLE_ENTITY);
             });
         }
 
         if (!ResponseFactory::hasMacro('jsonGone')) {
-            ResponseFactory::macro('jsonGone', function (string $message = 'Recurso não disponível.', array|JsonResource $data = null) {
+            ResponseFactory::macro('jsonGone', function (string $message = 'Recurso não disponível.', array|JsonResource|null $data = null) {
                 return response()->jsonBase(false, $message, $data, Response::HTTP_GONE);
             });
         }
 
         if (!ResponseFactory::hasMacro('jsonNotFound')) {
-            ResponseFactory::macro('jsonNotFound', function (string $message = 'Resource not found.', array|JsonResource $data = null) {
+            ResponseFactory::macro('jsonNotFound', function (string $message = 'Resource not found.', array|JsonResource|null $data = null) {
                 return response()->jsonBase(false, $message, $data, Response::HTTP_NOT_FOUND);
             });
         }
 
         if (!ResponseFactory::hasMacro('jsonInternal')) {
-            ResponseFactory::macro('jsonInternal', function (string $message = 'Internal server error.', array|JsonResource $data = null) {
+            ResponseFactory::macro('jsonInternal', function (string $message = 'Internal server error.', array|JsonResource|null $data = null) {
                 return response()->jsonBase(false, $message, $data, Response::HTTP_INTERNAL_SERVER_ERROR);
             });
         }
