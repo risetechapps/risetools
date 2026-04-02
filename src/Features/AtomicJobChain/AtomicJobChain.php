@@ -274,7 +274,7 @@ class AtomicJobChain implements ShouldQueue
                     // $jobClass já está resolvido corretamente acima
                     $wrapperException = new \Exception(
                         "Job [{$jobClass}] failed: " . $exception->getMessage(),
-                        $exception->getCode(),
+                        (int) $exception->getCode(),
                         $exception
                     );
 
