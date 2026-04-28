@@ -5,7 +5,16 @@ namespace RiseTechApps\RiseTools;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Routing\ResponseFactory;
 use Illuminate\Support\ServiceProvider;
+use RiseTechApps\RiseTools\Features\AvatarGenerator\AvatarGenerator;
+use RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\Console\HealthCheckCommand;
+use RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\DatabaseHealthMonitor;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotCreateCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotDeleteCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotListCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotRestoreCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\DatabaseSnapshot;
 use RiseTechApps\RiseTools\Features\Device\Device;
+use RiseTechApps\RiseTools\Features\EmailValidator\EmailValidator;
 use Symfony\Component\HttpFoundation\Response;
 
 class RiseToolsServiceProvider extends ServiceProvider
@@ -16,6 +25,16 @@ class RiseToolsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerMacrosResponse();
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                SnapshotCreateCommand::class,
+                SnapshotRestoreCommand::class,
+                SnapshotListCommand::class,
+                SnapshotDeleteCommand::class,
+                HealthCheckCommand::class,
+            ]);
+        }
     }
 
     /**
@@ -25,6 +44,22 @@ class RiseToolsServiceProvider extends ServiceProvider
     {
         $this->app->singleton(Device::class, function ($app) {
             return new Device();
+        });
+
+        $this->app->singleton(AvatarGenerator::class, function ($app) {
+            return new AvatarGenerator();
+        });
+
+        $this->app->singleton(EmailValidator::class, function ($app) {
+            return new EmailValidator();
+        });
+
+        $this->app->singleton(DatabaseSnapshot::class, function ($app) {
+            return new DatabaseSnapshot();
+        });
+
+        $this->app->singleton(DatabaseHealthMonitor::class, function ($app) {
+            return new DatabaseHealthMonitor();
         });
     }
 
