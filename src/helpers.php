@@ -9,17 +9,49 @@ if (!function_exists('avatarGenerator')) {
     }
 }
 
-if (!function_exists('MaskInput')) {
-    function MaskInput(string $value, string $mask): string
+if (!function_exists('mask_input')) {
+    function mask_input(string $value, string $mask): string
     {
         return (new \RiseTechApps\RiseTools\Features\MaskInput\MaskInput)->MaskInput($value, $mask);
     }
 }
 
-if (!function_exists("domainTools")) {
+if (!function_exists('domainTools')) {
 
     function domainTools(string $domain): \RiseTechApps\RiseTools\Features\Domain\Domain
     {
         return new RiseTechApps\RiseTools\Features\Domain\Domain($domain);
+    }
+}
+
+if (!function_exists('email_validator')) {
+
+    function email_validator(): \RiseTechApps\RiseTools\Features\EmailValidator\EmailValidator
+    {
+        return app(\RiseTechApps\RiseTools\Features\EmailValidator\EmailValidator::class);
+    }
+}
+
+if (!function_exists('n_plus_one_detector')) {
+
+    function n_plus_one_detector(): \RiseTechApps\RiseTools\Features\NPlusOneDetector\NPlusOneDetector
+    {
+        return new \RiseTechApps\RiseTools\Features\NPlusOneDetector\NPlusOneDetector();
+    }
+}
+
+if (!function_exists('database_snapshot')) {
+
+    function database_snapshot(): \RiseTechApps\RiseTools\Features\DatabaseSnapshot\DatabaseSnapshot
+    {
+        return app(\RiseTechApps\RiseTools\Features\DatabaseSnapshot\DatabaseSnapshot::class);
+    }
+}
+
+if (!function_exists('db_health_monitor')) {
+
+    function db_health_monitor(): \RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\DatabaseHealthMonitor
+    {
+        return app(\RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\DatabaseHealthMonitor::class);
     }
 }
