@@ -6,8 +6,6 @@ class MaskInput
 {
     public function MaskInput(string $value, string $mask): string
     {
-        if (is_null($value)) return $value;
-
         $masked = '';
         $k = 0;
 
