@@ -1,11 +1,18 @@
-# 🌅 Rise Tech Tools
+# 🌅 RiseTools
 
-Pacote de **macros, helpers e utilitários avançados** da [Rise Tech](https://risetech.com.br) para aplicações Laravel.
+Pacote de **macros, helpers, features avançadas e ferramentas de desenvolvimento** da [Rise Tech](https://risetech.com.br) para aplicações Laravel.
 
-Inclui agora:
-
-✨ **AvatarGenerator** — criação automática de avatares circulares com gradiente, iniciais e cores consistentes.  
-Ideal para APIs, dashboards, perfis de usuários e sistemas que precisam de avatares dinâmicos.
+Inclui ferramentas para:
+- ✅ **Respostas JSON padronizadas**
+- 🎨 **Geração de avatares**
+- 🔍 **Detecção de dispositivos e geolocalização**
+- 🌐 **Análise de domínios**
+- 🎭 **Máscaras de input**
+- ⚡ **Detecção de N+1 queries**
+- 📸 **Snapshots de banco para testes**
+- 🏥 **Monitor de saúde do banco**
+- ✉️ **Validação de e-mails**
+- ⛓️ **Cadeias atômicas de jobs**
 
 > Compatível com **Laravel 12+** e **PHP 8.3+**
 
@@ -16,610 +23,535 @@ Ideal para APIs, dashboards, perfis de usuários e sistemas que precisam de avat
 
 ---
 
-## 🚀 Instalação
+## 📦 Instalação
 
 ```bash
 composer require risetechapps/risetools
 ```
 
+O pacote usa **auto-discovery** do Laravel. O service provider será registrado automaticamente.
+
+---
+
+## 📚 Sumário
+
+- [Macros de Resposta JSON](#macros-de-resposta-json)
+- [AvatarGenerator](#avatargenerator)
+- [Device](#device)
+- [Domain](#domain)
+- [MaskInput](#maskinput)
+- [AtomicJobChain](#atomicjobchain)
+- [EmailValidator](#emailvalidator)
+- [NPlusOneDetector](#nplusonedetector)
+- [DatabaseSnapshot](#databasesnapshot)
+- [DatabaseHealthMonitor](#databasehealthmonitor)
+- [Comandos Artisan](#comandos-artisan)
+- [Helpers](#helpers)
+
 ---
 
 ## Macros de Resposta JSON
 
-Para padronizar as respostas da API e facilitar o consumo por clientes, foram registradas macros na `Illuminate\Contracts\Routing\ResponseFactory` que seguem um formato JSON consistente.
+Padronize as respostas da API com estrutura consistente.
 
-Todas as respostas JSON seguirão a seguinte estrutura base:
+### Estrutura Base
 
-| Campo | Tipo | Descrição |
-| :--- | :--- | :--- |
-| `success` | `boolean` | Indica se a operação foi bem-sucedida (`true`) ou se ocorreu um erro (`false`). |
-| `code` | `integer` | O código de status HTTP da resposta. |
-| `message` | `string` | Uma mensagem descritiva sobre o resultado da operação (opcional). |
-| `data` | `object/array` | Os dados de resposta da operação (opcional). |
+```json
+{
+    "success": true,
+    "code": 200,
+    "message": "Operation completed successfully.",
+    "data": { ... }
+}
+```
 
-### Macros Disponíveis
+### Métodos Disponíveis
 
-As macros podem ser chamadas diretamente a partir da *facade* `response()`.
+| Macro | Status HTTP | Uso |
+|-------|-------------|-----|
+| `jsonSuccess()` | 200 | Operações bem-sucedidas |
+| `jsonError()` | 422 | Erros de validação/entidade |
+| `jsonGone()` | 410 | Recursos descontinuados |
+| `jsonNotFound()` | 404 | Recursos não encontrados |
+| `jsonInternal()` | 500 | Erros internos |
 
-#### 1. `response()->jsonSuccess($data = null, $message = 'Operation completed successfully.')`
+### Exemplos
 
-Utilizada para retornar uma resposta de sucesso.
+```php
+// Sucesso com dados
+return response()->jsonSuccess(['id' => 1, 'name' => 'Produto']);
 
-*   **Status HTTP:** `200 OK`
-*   **Parâmetros:**
-    *   `$data`: Dados a serem retornados (array ou `JsonResource`).
-    *   `$message`: Mensagem de sucesso personalizada.
-*   **Exemplo de Uso:**
-    ```php
-    return response()->jsonSuccess(['id' => 1, 'name' => 'Produto X']);
-    ```
-*   **Exemplo de Resposta:**
-    ```json
-    {
-        "success": true,
-        "code": 200,
-        "message": "Operation completed successfully.",
-        "data": {
-            "id": 1,
-            "name": "Produto X"
-        }
-    }
-    ```
+// Erro de validação
+return response()->jsonError('Dados inválidos', ['errors' => $validator->errors()]);
 
-#### 2. `response()->jsonError($message = 'Resource not available.', $data = null)`
-
-Utilizada para retornar um erro de processamento ou de entidade não processável.
-
-*   **Status HTTP:** `422 Unprocessable Entity`
-*   **Parâmetros:**
-    *   `$message`: Mensagem de erro personalizada.
-    *   `$data`: Dados adicionais sobre o erro (ex: erros de validação).
-*   **Exemplo de Uso:**
-    ```php
-    return response()->jsonError('Os dados fornecidos são inválidos.', ['errors' => ['field' => 'required']]);
-    ```
-
-#### 3. `response()->jsonGone($message = 'Recurso não disponível.', $data = null)`
-
-Utilizada para indicar que o recurso solicitado não está mais disponível e não será novamente.
-
-*   **Status HTTP:** `410 Gone`
-*   **Parâmetros:**
-    *   `$message`: Mensagem de erro personalizada.
-    *   `$data`: Dados adicionais sobre o erro.
-*   **Exemplo de Uso:**
-    ```php
-    return response()->jsonGone('A versão desta API foi descontinuada.');
-    ```
-
-#### 4. `response()->jsonNotFound($message = 'Resource not found.', $data = null)`
-
-Utilizada para indicar que o recurso solicitado não foi encontrado.
-
-*   **Status HTTP:** `404 Not Found`
-*   **Parâmetros:**
-    *   `$message`: Mensagem de erro personalizada.
-    *   `$data`: Dados adicionais sobre o erro.
-*   **Exemplo de Uso:**
-    ```php
-    return response()->jsonNotFound('O usuário com ID 5 não existe.');
-    ```
-
-#### 5. `response()->jsonInternal($message = 'Internal server error.', $data = null)`
-
-Utilizada para indicar um erro interno do servidor.
-
-*   **Status HTTP:** `500 Internal Server Error`
-*   **Parâmetros:**
-    *   `$message`: Mensagem de erro personalizada.
-    *   `$data`: Dados adicionais sobre o erro (ex: ID de rastreamento de log).
-*   **Exemplo de Uso:**
-    ```php
-    return response()->jsonInternal('Ocorreu um erro inesperado ao processar a requisição.');
-    ```
-
-***
-
-### Macro Base (Interna)
-
-A macro `jsonBase` é a implementação interna utilizada por todas as outras macros e não deve ser chamada diretamente em seu código de aplicação.
-
-`response()->jsonBase(bool $success, string $message = null, array|JsonResource $data = null, int $code = Response::HTTP_OK)`
+// Recurso não encontrado
+return response()->jsonNotFound('Usuário não existe');
+```
 
 ---
 
-# 🎨 AvatarGenerator
+## AvatarGenerator
 
-O **AvatarGenerator** permite gerar imagens de avatar totalmente automáticas com:
+Criação automática de avatares circulares com gradiente, iniciais e cores consistentes.
+
+### Características
 
 - ✔ Gradiente circular elegante
-- ✔ Cores únicas e consistentes baseadas no nome
-- ✔ Iniciais automáticas (ex.: “Mateus Soares” → MS)
-- ✔ Fundo circular com transparência
-- ✔ Retorno como PNG binário
-- ✔ Retorno Base64 (ideal para API)
-- ✔ Salvamento como arquivo
+- ✔ Cores únicas baseadas no nome (hash MD5)
+- ✔ Iniciais automáticas (ex: "Mateus Soares" → MS)
+- ✔ Fundo transparente
+- ✔ Retorno como PNG binário ou Base64
 - ✔ Salvamento via Laravel Storage
 
----
-
-## 🧪 Exemplo de Uso
-
-### ➤ Gerar avatar como PNG
+### Exemplos
 
 ```php
-use RiseTechApps\RiseTools\Features\AvatarGenerator;
+use RiseTechApps\RiseTools\Features\AvatarGenerator\AvatarGenerator;
 
 $avatar = new AvatarGenerator();
+
+// Como resposta HTTP
 $png = $avatar->generate('Mateus Soares');
-
 return response($png)->header('Content-Type', 'image/png');
-```
 
----
+// Base64 para APIs
+$base64 = $avatar->generateBase64('Mateus Soares');
 
-### ➤ Gerar avatar em Base64
-
-```php
-$avatar = new AvatarGenerator();
-
-return [
-    'avatar' => $avatar->generateBase64('Mateus Soares'),
-];
-```
-
----
-
-### ➤ Salvar avatar em arquivo
-
-```php
-$avatar = new AvatarGenerator();
+// Salvar em arquivo
 $avatar->saveToFile('avatars/mateus.png', 'Mateus Soares');
+
+// Via Storage
+$avatar->saveToStorage('public', 'avatars/mateus.png', 'Mateus Soares');
+```
+
+**Via helper:**
+```php
+avatar_generator()->generate('João Silva');
 ```
 
 ---
 
-### ➤ Salvar usando Storage do Laravel
+## Device
+
+Detecção de informações do dispositivo, navegador, plataforma e geolocalização por IP.
+
+### Retorno
 
 ```php
-$avatar = new AvatarGenerator();
-
-$avatar->saveToStorage(
-    'public',
-    'avatars/mateus.png',
-    'Mateus Soares'
-);
+[
+    'device' => 'Desktop | Mobile | Tablet | Bot',
+    'browser' => 'Chrome | Safari | Firefox | Edge',
+    'browser_name' => 'Chrome 120.0',
+    'platformName' => 'Windows | Android | iOS | MacOS',
+    'geo_ip' => [
+        'country' => 'Brazil',
+        'countryCode' => 'BR',
+        'city' => 'São Paulo',
+        'lat' => -23.55,
+        'lon' => -46.64,
+        // ...
+    ]
+]
 ```
 
----
-
-## ⚙️ Funcionamento
-
-O gradiente é criado com base em um hash MD5 do nome, garantindo que cada usuário tenha sempre **as mesmas cores**.  
-As iniciais são extraídas automaticamente:
-
-| Nome | Resultado |
-|------|-----------|
-| Mateus Soares | **MS** |
-| Mateus | **MA** |
-| João da Silva | **JS** |
-| "" | **U** |
-
----
-
-## 🛠️ Tecnologias Utilizadas
-
-- PHP GD / FreeType
-- Nenhuma dependência externa
-- Totalmente stateless
-
----
-
-# MaskInput
-
-O **MaskInput** permite **aplicar máscaras em strings**,  ideal para CPF, CNPJ, telefone, CEP e outros formatos personalizados.
-
-### Utilizando a classe `MaskInput`
-
-```php
-use RiseTechApps\RiseTools\Features\MaskInput\MaskInput;
-
-$maskInput = new MaskInput();
-
-$result = $maskInput->MaskInput('12345678901', '###.###.###-##');
-
-echo $result;
-// 123.456.789-01
-
-echo mask_input('12345678901', '###.###.###-##');
-// 123.456.789-01
-```
----
-
-## 🧩 Como funciona
-
-- O caractere `#` representa um valor dinâmico
-- Qualquer outro caractere na máscara é inserido automaticamente
-- A máscara é aplicada da esquerda para a direita
-- Valores excedentes são ignorados
-
-### Parâmetros
-
-| Parâmetro | Tipo | Descrição |
-|---------|------|----------|
-| `$value` | string | Valor sem máscara |
-| `$mask` | string | Máscara desejada |
-
----
-
-# Device
-O utilitário para **detecção de informações do dispositivo, navegador, plataforma e geolocalização por IP** em aplicações Laravel.
-
-Este recurso utiliza o pacote `hisorange/browser-detect` para identificar o ambiente do usuário e a API pública `ip-api.com` para dados de geolocalização.
-
----
-
-## 🚀 Uso
-
-### Obtendo informações do dispositivo
+### Exemplo
 
 ```php
 use RiseTechApps\RiseTools\Features\Device\Device;
 
 $info = Device::info();
+// ou
+$info = app(Device::class)->info();
 
-dd($info);
-```
----
-
-## 📌 Retorno do método `info()`
-
-O método retorna um array com as seguintes informações:
-
-```php
-[
-    'device' => 'Desktop | Mobile | Tablet | Bot | Unknown',
-    'browser' => 'Chrome | Safari | Firefox | Edge | Opera | IE | webView | Unknown',
-    'browser_name' => 'Nome completo do navegador',
-    'platformName' => 'Windows | Android | iOS | Linux | MacOS | etc',
-    'geo_ip' => [
-        'status' => '',
-        'country' => '',
-        'countryCode' => '',
-        'region' => '',
-        'regionName' => '',
-        'city' => '',
-        'zip' => '',
-        'lat' => '',
-        'lon' => '',
-        'timezone' => '',
-        'isp' => '',
-        'org' => '',
-        'as' => '',
-        'query' => '',
-    ]
-]
+// Apenas IP público
+$ip = Device::getClientPublicIp(); // Detecta CloudFlare, proxies, etc
 ```
 
 ---
 
-## 🌍 Geolocalização por IP
+## Domain
 
-A geolocalização é obtida através do serviço público:
+Análise completa de domínios: subdomínios, DNS, SSL, WHOIS.
 
-- **ip-api.com**
+### Funcionalidades
 
-⚠️ Observação:
-- O serviço possui limites de requisição
-- Não recomendado para uso crítico ou de alta escala sem cache
+| Método | Descrição |
+|--------|-----------|
+| `getDomain()` | Domínio registrável (ex: example.com) |
+| `getSubDomain()` | Subdomínio (ex: blog) |
+| `getIp()` | Endereço IP |
+| `getDnsRecords()` | Registros DNS (A, MX, TXT, etc) |
+| `getSslInfo()` | Validade e emissor do SSL |
+| `isResolvable()` | Resolve no DNS? |
+| `isPublished()` | Responde HTTP? |
+| `getWhoisExpiration()` | Data de expiração via WHOIS |
 
----
-
-## 🧠 Detecção de IP do Cliente
-
-O método tenta identificar corretamente o IP público considerando:
-
-- Cloudflare (`HTTP_CF_CONNECTING_IP`)
-- Proxy reverso (`X-Forwarded-For`)
-- IP real (`REMOTE_ADDR`)
-- Fallback para `request()->ip()`
-
----
-
-## 🧪 Métodos Disponíveis
-
-```php
-Device::info(): array
-Device::getClientPublicIp(): ?string
-```
-
----
-
-# Domain
-
-Package utilitário para **análise e obtenção de informações de domínios**, incluindo subdomínio, IP, registros DNS, SSL, status de publicação e dados WHOIS.
-
-Este recurso faz parte do ecossistema **RiseTools** e foi projetado para uso em aplicações Laravel.
-
----
-
-## 📦 Instalação
-
-Instale as dependências necessárias via Composer:
-
-```bash
-composer require spatie/dns jeremykendall/php-domain-parser iodev/whois
-```
-
-> O pacote utiliza a lista oficial do Public Suffix (`publicsuffix.org`).
-
----
-
-## ⚙️ Requisitos
-
-- PHP **8.3+**
-- Laravel **12+**
-- Extensões PHP:
-    - `openssl`
-    - `dns`
-
----
-
-## 🚀 Uso Básico
-
-### Criando a instância da classe Domain
+### Exemplos
 
 ```php
 use RiseTechApps\RiseTools\Features\Domain\Domain;
 
 $domain = new Domain('blog.example.com');
-
+// ou
 $domain = domainTools('blog.example.com');
+
+$domain->getDomain();        // "example.com"
+$domain->getSubDomain();     // "blog"
+$domain->getSslInfo();       // ['status' => true, 'issuer' => 'Let\'s Encrypt', ...]
+$domain->getInfo();          // Array com todas as informações
 ```
 
 ---
 
-## 📌 Métodos Disponíveis
+## MaskInput
 
-### Obter domínio principal (registrável)
+Aplicação de máscaras em strings: CPF, CNPJ, telefone, CEP, etc.
 
-```php
-$domain->getDomain();
-// example.com
-```
-
-### Obter subdomínio
+### Uso
 
 ```php
-$domain->getSubDomain();
-// blog
+use RiseTechApps\RiseTools\Features\MaskInput\MaskInput;
+
+$mask = new MaskInput();
+$mask->MaskInput('12345678901', '###.###.###-##');
+// "123.456.789-01"
+
+// Via helper
+mask_input('12345678901', '###.###.###-##');
+mask_input('11223344000199', '##.###.###/####-##');
+mask_input('11987654321', '(##) #####-####');
 ```
 
-### Obter IP do domínio
-
-```php
-$domain->getIp();
-// 93.184.216.34
-```
-
-### Obter registros DNS
-
-```php
-$domain->getDnsRecords();
-// Retorna registros A, MX, TXT, CNAME, etc
-```
+**Padrão:** `#` representa caractere dinâmico.
 
 ---
 
-## 🔐 Informações de SSL
+## AtomicJobChain
+
+Encadeamento atômico de jobs com callbacks (then/catch/finally).
+
+### Diferenciais
+
+- ✔ Execução sequencial atômica (falha em um = interrompe tudo)
+- ✔ Callbacks: `then()`, `catch()`, `finally()`
+- ✔ Integração com Horizon (display name descritivo)
+- ✔ Tags para filtragem
+- ✔ Suporte a `DB::afterCommit()`
+
+### Exemplo
 
 ```php
-$domain->getSslInfo();
-```
-
-Retorno esperado:
-
-```php
-[
-    'status' => true,
-    'issuer' => 'Let\'s Encrypt',
-    'expires_at' => '2025-01-01 12:00:00',
-    'is_expired' => false
-]
-```
-
----
-
-## 🌐 Verificações de Domínio
-
-### Verificar se o domínio resolve no DNS
-
-```php
-$domain->isResolvable();
-// true | false
-```
-
-### Verificar se o domínio está publicado
-
-```php
-$domain->isPublished();
-// true | false
-```
-
----
-
-## 🧾 WHOIS – Data de Expiração
-
-```php
-$domain->getWhoisExpiration();
-// 2026-03-15
-```
-
-> ⚠️ O WHOIS pode falhar dependendo do TLD ou indisponibilidade do servidor.
-
----
-
-## 📊 Informações Completas do Domínio
-
-```php
-$domain->getInfo();
-```
-
-Retorno:
-
-```php
-[
-    'domain' => 'example.com',
-    'hasSubDomain' => true,
-    'subDomain' => 'blog',
-    'ip' => '93.184.216.34',
-    'dns' => [],
-    'ssl' => [],
-    'resolve' => true,
-    'status' => true,
-    'expires_at' => '2026-03-15'
-]
-```
-
----
-
-# AtomicJobChain
-
-O `AtomicJobChain` é uma poderosa classe utilitária do Laravel que permite encadear múltiplos Jobs de forma **atômica** e **sequencial**. Diferente do encadeamento nativo do Laravel, esta implementação oferece um controle mais refinado sobre o fluxo de execução e incorpora os callbacks de sucesso, falha e finalização (`then`, `catch`, `finally`), inspirados no recurso de Batches.
-
-## 🌟 Funcionalidades Principais
-
-*   **Execução Sequencial Atômica:** Os Jobs são executados um após o outro. A falha em qualquer Job interrompe imediatamente a execução da cadeia.
-*   **Callbacks de Fluxo de Controle:** Suporte a `then()`, `catch()` e `finally()` para reagir ao resultado final da cadeia.
-*   **Integração com Eventos:** Método `toListener()` para fácil despacho da cadeia a partir de Listeners de Eventos.
-*   **Visibilidade no Horizon:** Implementação do `displayName()` para uma visualização clara e descritiva no painel do Laravel Horizon.
-
-## 🚀 Uso
-
-A cadeia é tipicamente construída usando o método estático `make()` e configurada com a *Fluent Interface*.
-
-### 1. Construção e Despacho
-
-O uso mais comum é dentro de um Listener de Eventos, garantindo que a cadeia seja despachada de forma assíncrona.
-
-```php
-use App\Jobs\Database\SeedDatabaseJob;
-use App\Jobs\SubTenant\CreateSubTenantDefaultJob;
-use App\Events\Database\DatabaseMigratedEvent;
 use RiseTechApps\RiseTools\Features\AtomicJobChain\AtomicJobChain;
 
-// Dentro de um EventServiceProvider ou Listener
-Event::listen(DatabaseMigratedEvent::class, function (DatabaseMigratedEvent $event) {
-    
-    AtomicJobChain::make([
-        SeedDatabaseJob::class,
-        CreateSubTenantDefaultJob::class,
-        // ... adicione quantos Jobs forem necessários
-    ])
-    // Transforma o evento em um objeto passável para os Jobs internos
-    ->send(function (DatabaseMigratedEvent $event) {
-        $event->tenancy->refresh();
-        return $event->tenancy; // O objeto retornado será passado para os Jobs
-    })
-    ->shouldBeQueued(true) // Garante que a cadeia será enfileirada
-    ->toListener(); // Retorna a Closure que o Laravel usa para despachar o Job
+AtomicJobChain::make([
+    SeedDatabaseJob::class,
+    CreateTenantDefaultsJob::class,
+    SendWelcomeEmailJob::class,
+])
+->send(function ($event) {
+    return $event->tenancy;
+})
+->then(function () {
+    Log::info('Cadeia concluída!');
+})
+->catch(function ($exception) {
+    Log::error('Falha: ' . $exception->getMessage());
+})
+->finally(function () {
+    Cache::forget('chain_running');
+})
+->toListener();
+```
+
+---
+
+## EmailValidator
+
+Validação de e-mails em múltiplos níveis.
+
+### Níveis de Validação
+
+1. **Formato** - Regex RFC 5322
+2. **MX Records** - Domínio aceita e-mail?
+3. **SMTP** - Tenta verificar caixa postal
+
+### Funcionalidades
+
+| Método | Descrição |
+|--------|-----------|
+| `isValidFormat()` | Valida sintaxe |
+| `hasValidMxRecords()` | Verifica DNS MX |
+| `isValid()` | Formato + MX |
+| `verifySmtp()` | Verificação SMTP |
+| `isDisposable()` | Detecta e-mails temporários |
+| `isRoleBased()` | Detecta e-mails genéricos (contato@, suporte@) |
+| `getInfo()` | Relatório completo |
+
+### Exemplos
+
+```php
+$validator = email_validator();
+
+// Validação básica
+$validator->isValid('contato@empresa.com.br'); // true
+
+// Verificação completa
+$info = $validator->getInfo('contato@empresa.com.br');
+// ['valid_format' => true, 'has_mx_records' => true, 'is_disposable' => false, ...]
+
+// Detecta temporários
+$validator->isDisposable('teste@tempmail.com'); // true
+```
+
+---
+
+## NPlusOneDetector
+
+Detecta queries N+1 em tempo real com sugestões de correção.
+
+### Características
+
+- 🔍 Detecta padrões N+1 automaticamente
+- 📊 Analisa queries e sugere eager loading
+- 📡 Reporta para Log e/ou Sentry
+- 🎲 Suporta amostragem (para produção)
+
+### Configuração
+
+```php
+// Em AppServiceProvider::boot()
+n_plus_one_detector()
+    ->enable()
+    ->threshold(5)              // Alerta após 5 queries iguais
+    ->sampleRate(1.0)          // 100% das requisições
+    ->reportToLog()
+    ->reportToSentry()
+    ->suggestEagerLoading();
+```
+
+### Exemplo de Alerta
+
+```
+[N+1 Query] 5 queries detectadas para tabela 'comments'.
+Sugestão: Adicione ->with(['comments']) ao carregar Post
+```
+
+---
+
+## DatabaseSnapshot
+
+Snapshots ultra-rápidos do banco para testes.
+
+### Vantagens
+
+- ⚡ 100x mais rápido que `migrate:fresh --seed`
+- 💾 Suporta MySQL, PostgreSQL, SQLite
+- 🔄 Restauração em milissegundos
+- 🧪 Trait para PHPUnit
+
+### Comandos Artisan
+
+```bash
+# Criar snapshot
+php artisan risetools:snapshot:create baseline
+php artisan risetools:snapshot:create baseline --seed
+
+# Restaurar
+php artisan risetools:snapshot:restore baseline
+
+# Listar
+php artisan risetools:snapshot:list
+
+# Remover
+php artisan risetools:snapshot:delete baseline
+```
+
+### Uso em Testes
+
+```php
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Traits\InteractsWithSnapshots;
+
+class OrderTest extends TestCase
+{
+    use InteractsWithSnapshots;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Restaura em ~0.5s ao invés de 30s+
+        $this->restoreSnapshot('baseline');
+    }
+}
+```
+
+### Programático
+
+```php
+// Criar
+database_snapshot()->create('after-migrations', function () {
+    \App\Models\User::factory(100)->create();
+});
+
+// Restaurar
+database_snapshot()->restore('after-migrations');
+
+// Verificar
+database_snapshot()->exists('baseline');
+```
+
+---
+
+## DatabaseHealthMonitor
+
+Verificação completa de saúde do banco de dados.
+
+### Verificações Realizadas
+
+| Tipo | Severidade | Descrição |
+|------|------------|-----------|
+| ❌ Tabelas sem PK | Crítico | Sem chave primária |
+| ⚠️ Índices duplicados | Aviso | Índices redundantes |
+| ⚠️ JSON em tabelas grandes | Aviso | Colunas JSON em tabelas 1M+ |
+| ⚠️ FK sem índice | Aviso | Chaves estrangeiras não indexadas |
+| ⚠️ ENUM grande | Aviso | Mais de 20 valores |
+| ℹ️ Sem timestamps | Info | Falta created_at/updated_at |
+| ℹ️ Nullable sem default | Info | Ambiguidade em NULLs |
+| ❌ Auto increment limite | Crítico | Próximo do limite do tipo |
+
+### Comandos Artisan
+
+```bash
+# Verificação completa
+php artisan risetools:db:health
+
+# Por tabela
+php artisan risetools:db:health --table=orders
+
+# Por severidade
+php artisan risetools:db:health --severity=critical
+
+# Exportar JSON
+php artisan risetools:db:health --json
+
+# Salvar relatório
+php artisan risetools:db:health --export=storage/reports/db-health.json
+```
+
+### Programático
+
+```php
+$issues = db_health_monitor()->run();
+$summary = db_health_monitor()->getSummary();
+
+// Adicionar verificação customizada
+db_health_monitor()->addCheck(function (string $table) {
+    // sua lógica
+    return [
+        'table' => $table,
+        'type' => 'custom_check',
+        'severity' => 'warning',
+        'message' => '...',
+        'suggestion' => '...',
+    ];
 });
 ```
 
-### 2. Utilizando Callbacks (`then`, `catch`, `finally`)
+---
 
-Os callbacks permitem que você execute ações após a conclusão ou falha da cadeia.
+## Comandos Artisan
 
-| Método | Descrição | Argumentos Recebidos |
-| :--- | :--- | :--- |
-| `->then(callable $callback)` | Executado se **todos** os Jobs na cadeia forem concluídos com sucesso. | Nenhum |
-| `->catch(callable $callback)` | Executado se **qualquer** Job na cadeia falhar. | `Throwable $exception` (a exceção que causou a falha) |
-| `->finally(callable $callback)` | Executado **sempre** ao final da execução, independente do resultado. | Nenhum |
+Todos os comandos usam o prefixo `risetools:` para evitar conflitos.
 
-**Exemplo:**
+### Snapshot
 
-```php
-AtomicJobChain::make([...])
-    ->send([...])
-    ->then(function () {
-        // Notifica o sucesso da operação
-        Log::info('Cadeia de Jobs concluída com sucesso!');
-    })
-    ->catch(function (Throwable $e) {
-        // Registra a falha e a exceção
-        Log::error('A cadeia falhou: ' . $e->getMessage());
-    })
-    ->finally(function () {
-        // Executa a limpeza ou notificação final
-        Cache::forget('chain_running_flag');
-    })
-    ->toListener();
-```
+| Comando | Descrição |
+|---------|-----------|
+| `risetools:snapshot:create {name} {--seed}` | Cria snapshot do banco |
+| `risetools:snapshot:restore {name}` | Restaura snapshot |
+| `risetools:snapshot:list` | Lista snapshots |
+| `risetools:snapshot:delete {name}` | Remove snapshot |
 
-## 📊 Monitoramento com Laravel Horizon
+### Database Health
 
-O `AtomicJobChain` implementa o método `displayName()`, garantindo que o painel do Horizon exiba um nome descritivo em vez do nome da classe.
+| Comando | Descrição |
+|---------|-----------|
+| `risetools:db:health` | Verifica saúde do banco |
+| `risetools:db:health --table={table}` | Verifica tabela específica |
+| `risetools:db:health --json` | Exporta JSON |
 
-| Antes | Depois |
-| :--- | :--- |
-| `RiseTechApps\RiseTools\Features\AtomicJobChain\AtomicJobChain` | `Atomic Chain: SeedDatabaseJob, CreateSubTenantDefaultJob, ...` |
+---
 
-### Rastreamento de Falhas
+## Helpers
 
-Em caso de falha, o Horizon registrará o Job pai (`AtomicJobChain`) como falho. A exceção será encapsulada para indicar **qual Job interno** causou a interrupção, facilitando a depuração:
-
-> **Exception:** `Job [App\Jobs\Database\SeedDatabaseJob] failed: SQLSTATE[HY000]: General error: ...`
-
-Isso elimina a necessidade de vasculhar o Stack Trace para identificar o ponto exato da falha.
-
-## 🛠️ Detalhes Técnicos
-
-A classe utiliza a interface `ShouldQueue` e garante a atomicidade da execução no método `handle()`.
+Todos os helpers disponíveis:
 
 ```php
-// Trecho do método handle()
-try {
-    // ... execução do Job interno
-} catch (Throwable $exception) {
-    $hasFailed = true;
-    
-    // Executa o callback de falha
-    if ($this->onFailure) {
-        app()->call($this->onFailure, ['exception' => $exception]);
-    }
-    
-    // Lança a exceção encapsulada para o Horizon
-    throw $wrapperException; 
-}
-// ...
+// Avatar
+avatar_generator()->generate('Nome');
+
+// Máscara
+mask_input('12345678901', '###.###.###-##');
+
+// Domínio
+domainTools('blog.example.com');
+
+// E-mail
+email_validator()->isValid('email@exemplo.com');
+
+// N+1 Detector
+n_plus_one_detector()::getStats();
+
+// Snapshot
+database_snapshot()->list();
+
+// Health Monitor
+db_health_monitor()->run();
 ```
 
-O uso de `DB::afterCommit()` no método `toListener()` garante que a cadeia de Jobs só seja despachada para a fila **após** o commit de qualquer transação de banco de dados ativa, prevenindo problemas de concorrência.
-
-```php
-// Trecho do método toListener()
-if (DB::transactionLevel() > 0) {
-    DB::afterCommit(function () use ($executable) {
-        dispatch($executable);
-    });
-} else {
-    dispatch($executable);
-}
-```
 ---
 
 ## 🛠️ Requisitos
 
+### PHP e Laravel
+
 | Dependência | Versão mínima |
-|--------------|----------------|
+|-------------|---------------|
 | PHP | 8.3 |
 | Laravel | 12.x |
-| GD + FreeType | required |
-| Orchestra Testbench | 9.x |
-| PHPUnit | 11.x |
-| jeremykendall/php-domain-parser | 6.0 |
-| spatie/dns | 2.7.1 |
-| io-developer/php-whois | 4.1.10 |
+| GD + FreeType | required (AvatarGenerator) |
+| ext-openssl | required (Domain SSL) |
+| ext-pdo | required (Database features) |
+
+### DatabaseSnapshot - Ferramentas CLI
+
+Para usar os comandos de snapshot, você precisa instalar os clientes do banco de dados:
+
+**MySQL/MariaDB:**
+```bash
+# Debian/Ubuntu
+sudo apt-get install mysql-client
+
+# Alpine
+apk add mysql-client
+
+# CentOS/RHEL
+sudo yum install mysql
+```
+
+**PostgreSQL:**
+```bash
+# Debian/Ubuntu
+sudo apt-get install postgresql-client
+
+# Alpine
+apk add postgresql-client
+
+# CentOS/RHEL
+sudo yum install postgresql
+```
+
+**SQLite:** Não requer ferramentas adicionais (usa PHP nativo)
 
 ---
 
