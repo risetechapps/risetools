@@ -12,13 +12,43 @@ class AvatarGenerator
     /**
      * @throws Exception
      */
-    public function __construct()
+    public function __construct(?string $fontPath = null)
     {
-        $this->fontFile = __DIR__ . '/roboto.ttf';
+        if ($fontPath !== null && file_exists($fontPath)) {
+            $this->fontFile = $fontPath;
+        } else {
+            $this->fontFile = $this->resolveFontFile();
+        }
 
         if (!file_exists($this->fontFile)) {
             throw new Exception("Font file not found: {$this->fontFile}");
         }
+    }
+
+    /**
+     * Resolve o caminho da fonte tentando múltiplas opções.
+     */
+    private function resolveFontFile(): string
+    {
+        $candidates = [
+            __DIR__ . '/roboto.ttf',
+            __DIR__ . '/../resources/fonts/roboto.ttf',
+            // Fontes do sistema (Linux/Mac)
+            '/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/System/Library/Fonts/Helvetica.ttc',
+            // Windows
+            'C:\\Windows\Fonts\arial.ttf',
+        ];
+
+        foreach ($candidates as $font) {
+            if (file_exists($font)) {
+                return $font;
+            }
+        }
+
+        // Retorna o padrão mesmo se não existir, para manter compatibilidade
+        return __DIR__ . '/roboto.ttf';
     }
 
     /**
