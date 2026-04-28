@@ -17,7 +17,7 @@ class Device
             }
 
             $class = (new \hisorange\BrowserDetect\Parser())
-                ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
+                ->parse(request()->query('agent') ?? request()->header('User-Agent') ?? 'Missing');
 
             $result =  [
                 'device' => static::getTypeDevice($class),
