@@ -17,12 +17,17 @@ class Domain
     protected Rules $rules;
     protected ResolvedDomainName $resolvedDomainName;
 
+    private static ?Rules $cachedRules = null;
+
     public function __construct(string $domain)
     {
-
         $domain = parse_url($domain, PHP_URL_HOST) ?? $domain;
 
-        $this->rules = Rules::fromPath('https://publicsuffix.org/list/public_suffix_list.dat');
+        if (self::$cachedRules === null) {
+            self::$cachedRules = Rules::fromPath('https://publicsuffix.org/list/public_suffix_list.dat');
+        }
+
+        $this->rules = self::$cachedRules;
 
         $domain = PdpDomain::fromIDNA2008($domain);
         $this->resolvedDomainName = $this->rules->resolve($domain);
@@ -42,10 +47,7 @@ class Domain
     public function getIp(): ?string
     {
         $dns = new Dns();
-
-        $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
-        $records = $dns->getRecords($domain, 'A');
+        $records = $dns->getRecords($this->getFullHost(), 'A');
 
         if (count($records) > 0) {
             return $records[0]->ip();
@@ -58,9 +60,7 @@ class Domain
      */
     public function getDnsRecords(int $type = DNS_ALL): array
     {
-        $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
-        return dns_get_record($domain, $type) ?: [];
+        return dns_get_record($this->getFullHost(), $type) ?: [];
     }
 
     /**
@@ -69,12 +69,9 @@ class Domain
     public function getSslInfo(): array
     {
         try {
-
-            $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
             $context = stream_context_create(["ssl" => ["capture_peer_cert" => true]]);
             $client = @stream_socket_client(
-                "ssl://{$domain}:443",
+                "ssl://{$this->getFullHost()}:443",
                 $errno,
                 $errstr,
                 10,
@@ -82,10 +79,14 @@ class Domain
                 $context
             );
 
-            if (!$client) return ['status' => false, 'expires_at' => null];
+            if (!$client) {
+                return ['status' => false, 'expires_at' => null];
+            }
 
             $params = stream_context_get_params($client);
             $cert = openssl_x509_parse($params['options']['ssl']['peer_certificate']);
+
+            fclose($client);
 
             return [
                 'status' => true,
@@ -123,18 +124,19 @@ class Domain
     }
 
     /**
-     * Verifica se o domínio já está "público" na internet e se
-     * o apontamento condiz com o esperado.
+     * Verifica se o domínio responde HTTP 200 (está publicado na internet).
      */
     public function isPublished(): bool
     {
-        $dns = new \Spatie\Dns\Dns();
-        $records = $dns->getRecords($this->getDomain(), 'A');
-
-        if (empty($records)) {
+        try {
+            $headers = @get_headers($this->getUrl('https'), 1);
+            if ($headers === false) {
+                $headers = @get_headers($this->getUrl('http'), 1);
+            }
+            return $headers !== false && str_starts_with($headers[0], 'HTTP/');
+        } catch (Exception $e) {
             return false;
         }
-        return true;
     }
 
     /**
@@ -172,7 +174,6 @@ class Domain
             'status' => $this->isPublished(),
             'expires_at' => $this->getWhoisExpiration(),
             'url' => $this->getUrl(),
-            'fullUrl' => $this->getUrl()
         ];
     }
 
