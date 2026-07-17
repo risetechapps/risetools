@@ -27,13 +27,13 @@
         "php": "^8.3",
         "illuminate/support": "^12.0",
         "jeremykendall/php-domain-parser":"^6.0",
-        "spatie/dns" : "2.7.1",
+        "spatie/dns" : "^2.8.1",
         "ext-openssl": "*",
         "io-developer/php-whois":"4.1.10"
 
     },
     "require-dev": {
-        "orchestra/testbench": "^9.0",
+        "orchestra/testbench": "^10.0",
         "phpunit/phpunit": "^11.0",
         "ext-gd": "*"
     },
