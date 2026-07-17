@@ -16,7 +16,7 @@ class Device
                 return self::$cached;
             }
 
-            $class = (new \hisorange\BrowserDetect\Parser())
+            $class = new \hisorange\BrowserDetect\Parser()
                 ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
 
             $result =  [
@@ -30,7 +30,7 @@ class Device
             self::$cached = $result;
             return self::$cached;
 
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             return [];
         }
     }
@@ -125,12 +125,12 @@ class Device
                 if ($response->getStatusCode() == 200) {
                     $responseData = json_decode($response->getBody(), true);
                 }
-            } catch (\Exception $exception) {
+            } catch (\Exception) {
 
             }
 
             return $responseData;
-        } catch (\Exception $exception) {
+        } catch (\Exception) {
             return $responseData;
         }
     }

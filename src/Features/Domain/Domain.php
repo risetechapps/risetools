@@ -93,7 +93,7 @@ class Domain
                 'expires_at' => date('Y-m-d H:i:s', $cert['validTo_time_t']),
                 'is_expired' => now()->timestamp > $cert['validTo_time_t']
             ];
-        } catch (Exception $e) {
+        } catch (Exception) {
             return ['status' => false];
         }
     }
@@ -117,7 +117,7 @@ class Domain
                 return null;
             }
             return date('Y-m-d', $response->expirationDate);
-        } catch (ConnectionException|ServerMismatchException|WhoisException $e) {
+        } catch (ConnectionException|ServerMismatchException|WhoisException) {
             return null;
         }
     }

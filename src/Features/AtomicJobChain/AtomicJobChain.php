@@ -30,13 +30,6 @@ class AtomicJobChain implements ShouldQueue
      */
     public static bool $shouldBeQueuedByDefault = false;
 
-    /**
-     * A lista de Jobs a serem executados em sequência.
-     * Pode conter nomes de classes de Jobs ou Closures.
-     *
-     * @var callable[]|string[]
-     */
-    public array $jobs;
 
     /**
      * Callback usado para transformar os argumentos do evento de disparo em argumentos para os Jobs internos.
@@ -103,12 +96,9 @@ class AtomicJobChain implements ShouldQueue
      * @param callable|null $send Callback para processar argumentos de eventos.
      * @param bool|null $shouldBeQueued Define se deve ser enfileirado.
      */
-    public function __construct(array $jobs, ?callable $send = null, ?bool $shouldBeQueued = null)
+    public function __construct(public array $jobs, ?callable $send = null, ?bool $shouldBeQueued = null)
     {
-        $this->jobs = $jobs;
-        $this->send = $send ?? function ($event) {
-            return $event;
-        };
+        $this->send = $send ?? (fn($event) => $event);
         $this->shouldBeQueued = $shouldBeQueued ?? static::$shouldBeQueuedByDefault;
     }
 
@@ -198,7 +188,7 @@ class AtomicJobChain implements ShouldQueue
      */
     public function displayName(): string
     {
-        $total    = count($this->jobs);
+        $total = count($this->jobs);
         $jobNames = array_map(
             fn($job) => is_string($job) ? class_basename($job) : 'Closure',
             $this->jobs
@@ -225,7 +215,7 @@ class AtomicJobChain implements ShouldQueue
      */
     public function handle(): void
     {
-        $output    = new ConsoleOutput();
+        $output = new ConsoleOutput();
         $hasFailed = false;
 
         try {
@@ -234,19 +224,19 @@ class AtomicJobChain implements ShouldQueue
                 // ✅ Resolve o nome ANTES do try — fica correto tanto no
                 // onStepComplete (sucesso) quanto no catch (falha), mesmo
                 // depois que $job é reatribuído de string para [objeto, 'handle']
-                $jobClass = match(true) {
-                    is_string($job)                      => $job,
-                    is_array($job) && is_object($job[0]) => get_class($job[0]),
-                    is_array($job)                       => (string) $job[0],
-                    $job instanceof Closure              => 'Closure',
-                    default                              => 'UnknownJob',
+                $jobClass = match (true) {
+                    is_string($job) => $job,
+                    is_array($job) && is_object($job[0]) => $job[0]::class,
+                    is_array($job) => (string)$job[0],
+                    $job instanceof Closure => 'Closure',
+                    default => 'UnknownJob',
                 };
 
                 try {
                     // Instancia o Job se vier como string de classe
                     if (is_string($job)) {
-                        $passable = is_array($this->passable) ? $this->passable : (array) $this->passable;
-                        $job      = [new $job(...$passable), 'handle'];
+                        $passable = is_array($this->passable) ? $this->passable : (array)$this->passable;
+                        $job = [new $job(...$passable), 'handle'];
                     }
 
                     if (app()->runningInConsole()) {
@@ -274,7 +264,7 @@ class AtomicJobChain implements ShouldQueue
                     // $jobClass já está resolvido corretamente acima
                     $wrapperException = new \Exception(
                         "Job [{$jobClass}] failed: " . $exception->getMessage(),
-                        (int) $exception->getCode(),
+                        (int)$exception->getCode(),
                         $exception
                     );
 

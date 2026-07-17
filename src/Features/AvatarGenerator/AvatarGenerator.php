@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Storage;
 
 class AvatarGenerator
 {
-    private string $fontFile;
+    private readonly string $fontFile;
 
     /**
      * @throws Exception
