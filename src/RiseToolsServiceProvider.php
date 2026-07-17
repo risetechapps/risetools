@@ -6,6 +6,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Routing\ResponseFactory;
 use Illuminate\Support\ServiceProvider;
 use RiseTechApps\RiseTools\Features\Device\Device;
+use RiseTechApps\RiseTools\Features\HealthCheck\HealthCheckCommand;
 use Symfony\Component\HttpFoundation\Response;
 
 class RiseToolsServiceProvider extends ServiceProvider
@@ -16,6 +17,12 @@ class RiseToolsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerMacrosResponse();
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                HealthCheckCommand::class,
+            ]);
+        }
     }
 
     /**
