@@ -3,10 +3,51 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [3.0.1] - 2026-07-18
+
+> Vários itens abaixo restauram recursos e correções que existiam na 2.0.0 e foram perdidos na reescrita da 3.0.0 (features de banco/e-mail, PSL, `is_null` do MaskInput, duplicação de `fullUrl`).
+
+### Added
+- **EmailValidator** — restaurado (removido acidentalmente na 3.0.0).
+- **NPlusOneDetector** — restaurado.
+- **DatabaseSnapshot** (classe, trait `InteractsWithSnapshots` e comandos `risetools:snapshot:create|restore|list|delete`) — restaurado.
+- **DatabaseHealthMonitor** (classe + comando `risetools:db-health`) — restaurado.
+- **Helpers**: `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`.
+- **ServiceProvider**: registra os comandos de snapshot e db-health e os singletons de EmailValidator, NPlusOneDetector, DatabaseSnapshot e DatabaseHealthMonitor.
+- **Config**: seção `risetools.snapshot` (disk/path) e `mergeConfigFrom` sob a chave `risetools`.
+
+### Fixed
+- **Device**: `getGeoIP()` agora usa timeout (connect 2s / total 4s) e cache por IP (24h), evitando travar a request e estourar o limite do `ip-api.com`. Só cacheia respostas `status: success`.
+- **Device**: Removido cache estático `self::$cached`, que vazava dados de dispositivo/geo entre requests em ambientes persistentes (Octane/Swoole).
+- **Domain**: O Public Suffix List deixou de ser baixado da URL a cada `new Domain()`. Agora usa cache do Laravel (7 dias), memo por processo e cópia local empacotada como fallback offline — sem download no caminho da request e sem quebrar sem internet.
+- **AvatarGenerator**: `extractInitials()` retorna `"U"` para nome vazio (branch antes inalcançável) e usa funções multibyte (`mb_*`), corrigindo iniciais de nomes acentuados.
+- **Domain**: `getInfo()` — `fullUrl` agora usa `https` apenas quando há SSL válido (deixou de ser cópia de `url`); `getSslInfo()` é chamado uma única vez e reutilizado.
+- **MaskInput**: Removida verificação `is_null` redundante (parâmetro já tipado como `string`).
+
+### Changed
+- **Domain**: Adicionado arquivo `src/Features/Domain/public_suffix_list.dat` empacotado como fallback do PSL. O cache de 7 dias requer um driver de cache persistente (não `array`).
+- **Dependencies**: Declaradas dependências antes ausentes — `symfony/process` (DatabaseSnapshot), `guzzlehttp/guzzle` e `hisorange/browser-detect` (Device).
+
+### Docs
+- README: requisito de PHP atualizado para 8.4+, Orchestra Testbench 10.x e spatie/dns 2.8.1.
+- README: corrigido exemplo do helper de máscara (`MaskInput()`, não `mask_input()`).
+- README: nova seção **NPlusOneDetector** com exemplos de uso, estatísticas, integração com Sentry e a ressalva de que a escuta exige `NPlusOneDetector::enable()`.
+
 ## [3.0.0] - 2026-07-17
-- Corrigido parametros e funções obsoletas em php8.4
-- Atualizado Packages
-- Atualizado para php 8.4
+
+### Changed
+- Corrigidos parâmetros e funções obsoletas em PHP 8.4
+- Atualizados os pacotes de dependências
+- Requisito mínimo elevado para PHP 8.4
+
+### Removed
+- **EmailValidator** — removido
+- **NPlusOneDetector** — removido
+- **DatabaseSnapshot** (e comandos `risetools:snapshot:*`, trait `InteractsWithSnapshots`) — removido
+- **DatabaseHealthMonitor** (e comando `risetools:db:health`) — removido
+- Helpers relacionados: `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`
+
+> Estes recursos existiam na 2.0.0 e foram removidos nesta versão de forma não intencional durante a reescrita. Foram **restaurados na 3.0.1**.
 
 ## [2.0.0] - 2026-04-28
 
