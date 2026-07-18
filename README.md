@@ -7,11 +7,11 @@ Inclui agora:
 ✨ **AvatarGenerator** — criação automática de avatares circulares com gradiente, iniciais e cores consistentes.  
 Ideal para APIs, dashboards, perfis de usuários e sistemas que precisam de avatares dinâmicos.
 
-> Compatível com **Laravel 12+** e **PHP 8.3+**
+> Compatível com **Laravel 12+** e **PHP 8.4+**
 
 [![Packagist Version](https://img.shields.io/packagist/v/risetechapps/risetools.svg?color=00bfa5)](https://packagist.org/packages/risetechapps/risetools)
 [![License](https://img.shields.io/github/license/risetechapps/risetools.svg?color=00bfa5)](LICENSE)
-[![PHP Version](https://img.shields.io/badge/PHP-8.3-blue.svg)](https://www.php.net/)
+[![PHP Version](https://img.shields.io/badge/PHP-8.4-blue.svg)](https://www.php.net/)
 [![Laravel](https://img.shields.io/badge/Laravel-12.x-red.svg)](https://laravel.com)
 
 ---
@@ -231,7 +231,7 @@ $result = $maskInput->MaskInput('12345678901', '###.###.###-##');
 echo $result;
 // 123.456.789-01
 
-echo mask_input('12345678901', '###.###.###-##');
+echo MaskInput('12345678901', '###.###.###-##');
 // 123.456.789-01
 ```
 ---
@@ -309,9 +309,11 @@ A geolocalização é obtida através do serviço público:
 
 - **ip-api.com**
 
+O resultado é **cacheado por IP durante 24h** (via `Cache` do Laravel) e a chamada HTTP usa timeout (connect 2s / total 4s), evitando travar a request. Apenas respostas `status: success` são cacheadas.
+
 ⚠️ Observação:
-- O serviço possui limites de requisição
-- Não recomendado para uso crítico ou de alta escala sem cache
+- O serviço possui limites de requisição (~45 req/min no plano gratuito)
+- O cache por IP reduz drasticamente o número de chamadas, mas requer um driver de cache persistente (não `array`)
 
 ---
 
@@ -353,11 +355,22 @@ composer require spatie/dns jeremykendall/php-domain-parser iodev/whois
 
 > O pacote utiliza a lista oficial do Public Suffix (`publicsuffix.org`).
 
+### 🗂️ Cache do Public Suffix List
+
+A lista **não** é baixada a cada `new Domain()`. A resolução segue esta ordem:
+
+1. Memo por processo (objeto `Rules` já parseado)
+2. Cache do Laravel (`risetools:psl`, 7 dias)
+3. Um único download remoto (timeout 5s), armazenado no cache
+4. Cópia local empacotada (`src/Features/Domain/public_suffix_list.dat`) como fallback offline
+
+Assim não há chamada de rede no caminho da request após o primeiro carregamento, e o recurso não quebra sem internet. O cache de 7 dias requer um driver de cache persistente (não `array`).
+
 ---
 
 ## ⚙️ Requisitos
 
-- PHP **8.3+**
+- PHP **8.4+**
 - Laravel **12+**
 - Extensões PHP:
     - `openssl`
@@ -477,9 +490,13 @@ Retorno:
     'ssl' => [],
     'resolve' => true,
     'status' => true,
-    'expires_at' => '2026-03-15'
+    'expires_at' => '2026-03-15',
+    'url' => 'http://blog.example.com',
+    'fullUrl' => 'https://blog.example.com'
 ]
 ```
+
+> `fullUrl` usa `https` apenas quando há certificado SSL válido; caso contrário, é igual a `url` (`http`).
 
 ---
 
@@ -612,13 +629,13 @@ if (DB::transactionLevel() > 0) {
 
 | Dependência | Versão mínima |
 |--------------|----------------|
-| PHP | 8.3 |
+| PHP | 8.4 |
 | Laravel | 12.x |
 | GD + FreeType | required |
-| Orchestra Testbench | 9.x |
+| Orchestra Testbench | 10.x |
 | PHPUnit | 11.x |
 | jeremykendall/php-domain-parser | 6.0 |
-| spatie/dns | 2.7.1 |
+| spatie/dns | 2.8.1 |
 | io-developer/php-whois | 4.1.10 |
 
 ---
