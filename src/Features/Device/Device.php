@@ -3,23 +3,17 @@
 namespace RiseTechApps\RiseTools\Features\Device;
 
 use GuzzleHttp\Client;
+use Illuminate\Support\Facades\Cache;
 
 class Device
 {
-    private static ?array $cached = null;
-
     public static function info(): array
     {
         try {
-
-            if (self::$cached !== null) {
-                return self::$cached;
-            }
-
             $class = new \hisorange\BrowserDetect\Parser()
                 ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
 
-            $result =  [
+            return [
                 'device' => static::getTypeDevice($class),
                 'browser' => static::getTypeBrowser($class),
                 'browser_name' => static::getTypeBrowserName($class),
@@ -27,10 +21,7 @@ class Device
                 'geo_ip' => static::getGeoIP($class)
             ];
 
-            self::$cached = $result;
-            return self::$cached;
-
-        } catch (\Exception) {
+        } catch (\Throwable) {
             return [];
         }
     }
@@ -118,19 +109,34 @@ class Device
         try {
             $ip = self::getClientPublicIp();
 
-            $client = new Client();
-
-            try {
-                $response = $client->get("http://ip-api.com/json/{$ip}");
-                if ($response->getStatusCode() == 200) {
-                    $responseData = json_decode($response->getBody(), true);
-                }
-            } catch (\Exception) {
-
+            if (blank($ip)) {
+                return $responseData;
             }
 
-            return $responseData;
-        } catch (\Exception) {
+            return Cache::remember("risetools:geoip:{$ip}", now()->addHours(24), function () use ($ip, $responseData) {
+                $client = new Client([
+                    'connect_timeout' => 2,
+                    'timeout' => 4,
+                ]);
+
+                try {
+                    $response = $client->get("http://ip-api.com/json/{$ip}");
+
+                    if ($response->getStatusCode() === 200) {
+                        $decoded = json_decode((string)$response->getBody(), true);
+
+                        // ip-api returns status "success" | "fail"; only cache real hits.
+                        if (is_array($decoded) && ($decoded['status'] ?? null) === 'success') {
+                            return array_merge($responseData, $decoded);
+                        }
+                    }
+                } catch (\Throwable) {
+                    // fall through to default payload
+                }
+
+                return $responseData;
+            });
+        } catch (\Throwable) {
             return $responseData;
         }
     }
