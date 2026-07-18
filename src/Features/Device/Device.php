@@ -113,29 +113,39 @@ class Device
                 return $responseData;
             }
 
-            return Cache::remember("risetools:geoip:{$ip}", now()->addHours(24), function () use ($ip, $responseData) {
-                $client = new Client([
-                    'connect_timeout' => 2,
-                    'timeout' => 4,
-                ]);
+            // Geo de um IP é estável: cacheia por IP (compartilhado entre requests
+            // e usuários). Só cacheia SUCESSO — falha transitória não fica presa 24h.
+            $key = "risetools:geoip:{$ip}";
+            $cached = Cache::get($key);
 
-                try {
-                    $response = $client->get("http://ip-api.com/json/{$ip}");
+            if (is_array($cached)) {
+                return $cached;
+            }
 
-                    if ($response->getStatusCode() === 200) {
-                        $decoded = json_decode((string)$response->getBody(), true);
+            // Timeout curto: nunca prender o worker esperando o ip-api.
+            $client = new Client([
+                'connect_timeout' => 2,
+                'timeout' => 4,
+            ]);
 
-                        // ip-api returns status "success" | "fail"; only cache real hits.
-                        if (is_array($decoded) && ($decoded['status'] ?? null) === 'success') {
-                            return array_merge($responseData, $decoded);
-                        }
+            try {
+                $response = $client->get("http://ip-api.com/json/{$ip}");
+
+                if ($response->getStatusCode() === 200) {
+                    $decoded = json_decode((string)$response->getBody(), true);
+
+                    // ip-api retorna status "success" | "fail"; só cacheia hit real.
+                    if (is_array($decoded) && ($decoded['status'] ?? null) === 'success') {
+                        $data = array_merge($responseData, $decoded);
+                        Cache::put($key, $data, now()->addHours(24));
+                        return $data;
                     }
-                } catch (\Throwable) {
-                    // fall through to default payload
                 }
+            } catch (\Throwable) {
+                // cai no retorno padrão — sem cachear a falha
+            }
 
-                return $responseData;
-            });
+            return $responseData;
         } catch (\Throwable) {
             return $responseData;
         }
