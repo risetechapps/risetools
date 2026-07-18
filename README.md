@@ -625,6 +625,96 @@ if (DB::transactionLevel() > 0) {
 ```
 ---
 
+# NPlusOneDetector
+
+Detector automático do problema de **N+1 queries** em tempo de execução. Escuta todas as queries do banco (`DB::listen()`), agrupa por padrão, e quando um mesmo padrão se repete acima de um limite, reporta com uma **sugestão de eager loading**.
+
+## 🧠 O que é N+1
+
+Uma query para a lista + uma query por item ao acessar um relacionamento:
+
+```php
+$posts = Post::all();          // 1 query
+foreach ($posts as $post) {
+    echo $post->author->name;  // +1 query POR post → N queries
+}
+// 100 posts = 101 queries. O ideal seriam 2.
+```
+
+Correção típica:
+
+```php
+Post::with('author')->get();   // 2 queries
+```
+
+O `NPlusOneDetector` encontra esses casos automaticamente e sugere o `with()`/`whereIn()`.
+
+## 🚀 Uso
+
+Ative no início do ciclo (ex.: um `ServiceProvider` em ambiente `local`/`staging`):
+
+```php
+use RiseTechApps\RiseTools\Features\NPlusOneDetector\NPlusOneDetector;
+
+NPlusOneDetector::enable()    // inicia a escuta (DB::listen) — obrigatório
+    ->threshold(5)            // dispara após 5 repetições do mesmo padrão
+    ->sampleRate(1.0)         // 0.0–1.0: fração das queries analisadas
+    ->suggestEagerLoading()   // inclui sugestão de correção no relatório
+    ->reportToLog();          // grava aviso via Log::warning
+```
+
+> A escuta só começa após `NPlusOneDetector::enable()` (método estático). O helper `n_plus_one_detector()` retorna a instância para configuração/consulta, mas **não** ativa a escuta sozinho — use-o após `enable()`:
+
+```php
+NPlusOneDetector::enable();
+n_plus_one_detector()->threshold(5)->suggestEagerLoading()->reportToLog();
+```
+
+Quando um N+1 é detectado, um aviso como este vai para o log:
+
+```
+[N+1 Query] 8 queries detected for table 'posts'. Adicione ->with(['relation']) ao carregar Post
+```
+
+## 📊 Estatísticas
+
+```php
+NPlusOneDetector::getStats();
+/*
+[
+    'enabled' => true,
+    'total_unique_patterns' => 12,
+    'suspicious_patterns' => [...],
+    'top_queries' => [...]   // padrões mais frequentes (até 10)
+]
+*/
+
+NPlusOneDetector::clearStats();  // zera contadores
+NPlusOneDetector::disable();     // para de escutar
+```
+
+## ⚙️ Métodos de configuração
+
+| Método | Descrição |
+|--------|-----------|
+| `threshold(int)` | Nº de repetições do padrão até reportar (default `5`) |
+| `sampleRate(float)` | Amostragem de `0.0` a `1.0` (default `1.0`) |
+| `suggestEagerLoading()` | Adiciona sugestão de `with()`/`whereIn()` ao relatório |
+| `reportToLog()` | Reporta via `Log::warning` |
+| `reportToSentry()` | Reporta ao Sentry (se instalado) |
+
+## 🔗 Integração com Sentry
+
+Se o SDK do Sentry estiver presente, `reportToSentry()` envia o contexto (`table`, `count`, `suggestion`) e uma mensagem de aviso. Sem o SDK, é silenciosamente ignorado.
+
+## ⚠️ Cuidados
+
+- **Ferramenta de desenvolvimento/diagnóstico.** Ative em `local`/`staging`. Em produção, use `sampleRate` baixo (ex.: `0.05`) — cada padrão novo captura um `debug_backtrace` (custo).
+- **Estado interno é estático.** Em runtimes persistentes (Octane/Swoole) os contadores acumulam entre requests; chame `clearStats()`/`disable()` conforme o ciclo do worker.
+- **Apenas detecta** — não altera queries nem código. Emite aviso + sugestão.
+
+---
+
 ## 🛠️ Requisitos
 
 | Dependência | Versão mínima |
