@@ -7,6 +7,7 @@ use Iodev\Whois\Exceptions\ConnectionException;
 use Iodev\Whois\Exceptions\ServerMismatchException;
 use Iodev\Whois\Exceptions\WhoisException;
 use Iodev\Whois\Factory;
+use Illuminate\Support\Facades\Cache;
 use Pdp\Domain as PdpDomain;
 use Pdp\ResolvedDomainName;
 use Pdp\Rules;
@@ -14,6 +15,19 @@ use Spatie\Dns\Dns;
 
 class Domain
 {
+    /**
+     * Cache key + TTL for the downloaded Public Suffix List.
+     */
+    protected const PSL_CACHE_KEY = 'risetools:psl';
+    protected const PSL_URL = 'https://publicsuffix.org/list/public_suffix_list.dat';
+
+    /**
+     * Process-level memo of the parsed rules. The PSL is global immutable data,
+     * so a static cache is safe (unlike per-request user data) and avoids
+     * re-parsing the ~280KB list on every instantiation.
+     */
+    protected static ?Rules $rulesCache = null;
+
     protected Rules $rules;
     protected ResolvedDomainName $resolvedDomainName;
 
@@ -22,10 +36,66 @@ class Domain
 
         $domain = parse_url($domain, PHP_URL_HOST) ?? $domain;
 
-        $this->rules = Rules::fromPath('https://publicsuffix.org/list/public_suffix_list.dat');
+        $this->rules = static::resolveRules();
 
         $domain = PdpDomain::fromIDNA2008($domain);
         $this->resolvedDomainName = $this->rules->resolve($domain);
+    }
+
+    /**
+     * Resolve the PSL rules without hitting the network on the request path.
+     *
+     * Order: process memo → Laravel cache (7 days) → one remote download →
+     * bundled fallback copy. Never downloads on every instantiation and never
+     * hard-fails when publicsuffix.org is unreachable.
+     */
+    protected static function resolveRules(): Rules
+    {
+        if (static::$rulesCache instanceof Rules) {
+            return static::$rulesCache;
+        }
+
+        $content = Cache::get(self::PSL_CACHE_KEY);
+
+        if (blank($content)) {
+            $content = static::downloadPsl();
+
+            if (filled($content)) {
+                Cache::put(self::PSL_CACHE_KEY, $content, now()->addDays(7));
+            } else {
+                // Offline / download failed → bundled copy (not cached, so a
+                // later request can still refresh from the network).
+                $bundled = __DIR__ . '/public_suffix_list.dat';
+                $content = is_file($bundled) ? file_get_contents($bundled) : false;
+            }
+        }
+
+        if (blank($content)) {
+            throw new \RuntimeException(
+                'Unable to load the Public Suffix List: remote download failed and no bundled copy was found at ' . __DIR__ . '/public_suffix_list.dat'
+            );
+        }
+
+        return static::$rulesCache = Rules::fromString($content);
+    }
+
+    /**
+     * Download the PSL once with a short timeout. Returns null on any failure.
+     */
+    protected static function downloadPsl(): ?string
+    {
+        try {
+            $context = stream_context_create([
+                'http' => ['timeout' => 5],
+                'https' => ['timeout' => 5],
+            ]);
+
+            $data = @file_get_contents(self::PSL_URL, false, $context);
+
+            return ($data !== false && trim($data) !== '') ? $data : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     public function getDomain(): string
@@ -161,18 +231,25 @@ class Domain
 
     public function getInfo(): array
     {
+        // Open the SSL socket once and reuse it for both the 'ssl' payload and
+        // the canonical URL decision below.
+        $ssl = $this->getSslInfo();
+
+        // fullUrl reflects reality: https only when the host has a valid cert.
+        $canonicalProtocol = ($ssl['status'] ?? false) === true ? 'https' : 'http';
+
         return [
             'domain' => $this->getDomain(),
             'hasSubDomain' => !($this->getSubDomain() === null),
             'subDomain' => $this->getSubDomain(),
             'ip' => $this->getIp(),
             'dns' => $this->getDnsRecords(),
-            'ssl' => $this->getSslInfo(),
+            'ssl' => $ssl,
             'resolve' => $this->isResolvable(),
             'status' => $this->isPublished(),
             'expires_at' => $this->getWhoisExpiration(),
             'url' => $this->getUrl(),
-            'fullUrl' => $this->getUrl()
+            'fullUrl' => $this->getUrl($canonicalProtocol),
         ];
     }
 
