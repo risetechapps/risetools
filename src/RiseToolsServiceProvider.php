@@ -6,7 +6,16 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Routing\ResponseFactory;
 use Illuminate\Support\ServiceProvider;
 use RiseTechApps\RiseTools\Features\Device\Device;
+use RiseTechApps\RiseTools\Features\EmailValidator\EmailValidator;
+use RiseTechApps\RiseTools\Features\NPlusOneDetector\NPlusOneDetector;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\DatabaseSnapshot;
+use RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\DatabaseHealthMonitor;
 use RiseTechApps\RiseTools\Features\HealthCheck\HealthCheckCommand;
+use RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\Console\HealthCheckCommand as DatabaseHealthCheckCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotCreateCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotRestoreCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotListCommand;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console\SnapshotDeleteCommand;
 use Symfony\Component\HttpFoundation\Response;
 
 class RiseToolsServiceProvider extends ServiceProvider
@@ -21,6 +30,11 @@ class RiseToolsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 HealthCheckCommand::class,
+                DatabaseHealthCheckCommand::class,
+                SnapshotCreateCommand::class,
+                SnapshotRestoreCommand::class,
+                SnapshotListCommand::class,
+                SnapshotDeleteCommand::class,
             ]);
         }
     }
@@ -31,7 +45,13 @@ class RiseToolsServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
+        $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'risetools');
+
         $this->app->singleton(Device::class, fn($app) => new Device());
+        $this->app->singleton(EmailValidator::class, fn($app) => new EmailValidator());
+        $this->app->singleton(NPlusOneDetector::class, fn($app) => new NPlusOneDetector());
+        $this->app->singleton(DatabaseSnapshot::class, fn($app) => new DatabaseSnapshot());
+        $this->app->singleton(DatabaseHealthMonitor::class, fn($app) => new DatabaseHealthMonitor());
     }
 
     protected function registerMacrosResponse(): void
