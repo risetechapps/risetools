@@ -76,19 +76,22 @@ class AvatarGenerator
 
     private function extractInitials(string $name): string
     {
-        $parts = preg_split('/\s+/', trim($name));
+        $name = trim($name);
 
-        if (count($parts) === 0) {
+        if ($name === '') {
             return "U";
         }
 
+        $parts = preg_split('/\s+/', $name);
+
         if (count($parts) === 1) {
-            return strtoupper(substr($parts[0], 0, 2));
+            return mb_strtoupper(mb_substr($parts[0], 0, 2));
         }
 
-        return strtoupper(
-            $parts[0][0] . $parts[array_key_last($parts)][0]
-        );
+        $first = mb_substr($parts[0], 0, 1);
+        $last = mb_substr($parts[array_key_last($parts)], 0, 1);
+
+        return mb_strtoupper($first . $last);
     }
 
     /**
