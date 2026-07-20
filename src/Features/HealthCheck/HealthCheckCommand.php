@@ -16,7 +16,7 @@ class HealthCheckCommand extends Command
     /**
      * @var string
      */
-    protected $signature = 'rise:doctor
+    protected $signature = 'risetools:doctor
         {--only= : Comma separated list of checks to run (database,redis,storage,smtp)}
         {--disk= : Storage disk to test (defaults to filesystems.default)}
         {--mailer= : Mailer to test (defaults to mail.default)}
