@@ -3,6 +3,9 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [3.0.2] - 2026-07-20
+- Corrigido nome do comando de **rise:doctor** para **risetools:doctor**
+
 ## [3.0.1] - 2026-07-18
 
 > Vários itens abaixo restauram recursos e correções que existiam na 2.0.0 e foram perdidos na reescrita da 3.0.0 (features de banco/e-mail, PSL, `is_null` do MaskInput, duplicação de `fullUrl`).
