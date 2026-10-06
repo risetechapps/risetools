@@ -3,6 +3,19 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [3.1.0]
+
+### Changed
+- `Device::info(bool $withGeoIp = true)`: o geo (chamada HTTP externa) passa a ser opcional. Quem chama no caminho do request deve passar `false` — o monitoring-for-laravel passa a fazer isso por padrão. Sem argumento, o comportamento é o mesmo de antes.
+
+### Fixed
+- **Falha do geo não era cacheada**: com o provedor fora do ar ou limitando (ip-api grátis = 45 req/min), todo request pagava de novo até 6s de timeout. Agora a falha fica em cache negativo por `risetools.geoip.failure_ttl_minutes` (10).
+- **IP privado/reservado** (rede interna, localhost) era consultado em todo request e sempre falhava; agora retorna vazio sem chamada.
+- **Cache do geo por tenant**: pelo `Cache` facade, num app com tenancy, a chave ganhava o prefixo do tenant/filial/usuário e quase nunca era reaproveitada. Agora usa um store resolvido direto da config (`risetools.geoip.cache_store`), sem esse prefixo.
+
+### Added
+- Config `risetools.geoip` (`enabled`, `url`, `connect_timeout`, `timeout`, `failure_ttl_minutes`, `cache_store`).
+
 ## [3.0.2] - 2026-07-20
 - Corrigido nome do comando de **rise:doctor** para **risetools:doctor**
 
