@@ -17,8 +17,10 @@ class Device
     public static function info(bool $withGeoIp = true): array
     {
         try {
+            // Pelo request (não $_SERVER): seguro no Octane. O cliente não escolhe
+            // mais o user agent via ?agent=.
             $class = new \hisorange\BrowserDetect\Parser()
-                ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
+                ->parse(request()->userAgent() ?: 'Missing');
 
             $info = [
                 'device' => static::getTypeDevice($class),
@@ -119,7 +121,7 @@ class Device
         ];
 
         try {
-            if (!config('risetools.geoip.enabled', true)) {
+            if (!config('risetools.geoip.enabled', false)) {
                 return $responseData;
             }
 
@@ -194,31 +196,28 @@ class Device
         }
     }
 
+    /**
+     * IP do cliente.
+     *
+     * X-Forwarded-For / X-Real-IP são escritos pelo cliente: só valem quando
+     * vêm de um proxy confiável, e quem decide isso é o TrustProxies do Laravel
+     * (`$middleware->trustProxies(at: ...)`). Por isso o IP sai de
+     * `request()->ip()`, que já aplica essa regra.
+     */
     public static function getClientPublicIp(): ?string
     {
-        if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-            return $_SERVER['HTTP_CF_CONNECTING_IP'];
-        }
+        $request = request();
 
-        $headersToCheck = [
-            'HTTP_X_FORWARDED_FOR',
-            'HTTP_X_REAL_IP',
-            'REMOTE_ADDR',
-        ];
+        // CF-Connecting-IP só quando a origem aceita tráfego apenas da Cloudflare;
+        // senão qualquer um forja o header acessando o servidor direto.
+        if (config('risetools.ip.trust_cloudflare_header', false)) {
+            $ip = trim((string) $request->header('CF-Connecting-IP'));
 
-        foreach ($headersToCheck as $header) {
-            if (!empty($_SERVER[$header])) {
-                $ipList = explode(',', $_SERVER[$header]);
-                foreach ($ipList as $ip) {
-                    $ip = trim($ip);
-                    if (filter_var($ip, FILTER_VALIDATE_IP,
-                        FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                        return $ip;
-                    }
-                }
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
             }
         }
 
-        return request()->ip();
+        return $request->ip();
     }
 }

@@ -8,11 +8,14 @@ class DatabaseHealthMonitor
 {
     private array $checks = [];
     private array $results = [];
+    private string $connection;
     private string $driver;
 
     public function __construct()
     {
-        $this->driver = config('database.default');
+        // database.default é o NOME da conexão (ex.: "tenant"); o driver vem da config dela.
+        $this->connection = config('database.default');
+        $this->driver = config("database.connections.{$this->connection}.driver", $this->connection);
         $this->registerDefaultChecks();
     }
 
@@ -62,14 +65,18 @@ class DatabaseHealthMonitor
     /**
      * Retorna estatísticas resumidas.
      */
-    public function getSummary(): array
+    public function getSummary(?array $results = null): array
     {
-        $critical = count(array_filter($this->results, fn($r) => $r['severity'] === 'critical'));
-        $warning = count(array_filter($this->results, fn($r) => $r['severity'] === 'warning'));
-        $info = count(array_filter($this->results, fn($r) => $r['severity'] === 'info'));
+        // Sem argumento: o resultado da última execução. Com argumento: um
+        // recorte dele (ex.: filtrado por severidade no comando).
+        $results ??= $this->results;
+
+        $critical = count(array_filter($results, fn($r) => $r['severity'] === 'critical'));
+        $warning = count(array_filter($results, fn($r) => $r['severity'] === 'warning'));
+        $info = count(array_filter($results, fn($r) => $r['severity'] === 'info'));
 
         return [
-            'total_issues' => count($this->results),
+            'total_issues' => count($results),
             'critical' => $critical,
             'warning' => $warning,
             'info' => $info,
@@ -80,16 +87,19 @@ class DatabaseHealthMonitor
     /**
      * Gera relatório formatado.
      */
-    public function generateReport(): array
+    public function generateReport(?array $results = null): array
     {
+        $results = $results === null ? $this->results : array_values($results);
+
         return [
             'timestamp' => now()->toDateTimeString(),
             'database' => [
                 'driver' => $this->driver,
-                'connection' => config("database.connections.{$this->driver}.database"),
+                'connection' => $this->connection,
+                'database' => config("database.connections.{$this->connection}.database"),
             ],
-            'summary' => $this->getSummary(),
-            'issues' => $this->results,
+            'summary' => $this->getSummary($results),
+            'issues' => $results,
         ];
     }
 
@@ -189,23 +199,7 @@ class DatabaseHealthMonitor
                     'type' => 'missing_timestamps',
                     'severity' => 'info',
                     'message' => "Table '{$table}' with no timestamp columns",
-                    'suggestion' => 'Adicione $table->timestamps() para rastrear created_at e updated_at',
-                ];
-            }
-            return null;
-        };
-
-        // Verifica colunas nullable sem default (problema em inserts)
-        $this->checks[] = function (string $table) {
-            $nullableNoDefault = $this->getNullableWithoutDefault($table);
-            if (!empty($nullableNoDefault)) {
-                return [
-                    'table' => $table,
-                    'type' => 'nullable_without_default',
-                    'severity' => 'info',
-                    'message' => "Nullable columns with no default value in '{$table}'",
-                    'details' => $nullableNoDefault,
-                    'suggestion' => 'Add default values or make NOT NULL to avoid ambiguity',
+                    'suggestion' => 'Add $table->timestamps() to track created_at and updated_at',
                 ];
             }
             return null;
@@ -221,9 +215,9 @@ class DatabaseHealthMonitor
                     'table' => $table,
                     'type' => 'unused_indexes',
                     'severity' => 'info',
-                    'message' => "Unused indexes in '{$table}'",
+                    'message' => "Possibly unused indexes in '{$table}'",
                     'details' => $unusedIndexes,
-                    'suggestion' => 'Consider removing unused indexes to save space',
+                    'suggestion' => 'Confirm with production statistics before removing: counters reset on restart/stats reset',
                 ];
             }
             return null;
@@ -272,13 +266,13 @@ class DatabaseHealthMonitor
 
         if ($this->driver === 'mysql') {
             $results = DB::select('SHOW TABLES');
-            $dbName = config("database.connections.{$this->driver}.database");
+            $dbName = config("database.connections.{$this->connection}.database");
             $key = "Tables_in_{$dbName}";
             foreach ($results as $result) {
                 $tables[] = $result->{$key} ?? $result->{array_key_first((array)$result)};
             }
         } elseif ($this->driver === 'pgsql') {
-            $results = DB::select("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
+            $results = DB::select("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()");
             foreach ($results as $result) {
                 $tables[] = $result->tablename;
             }
@@ -321,6 +315,7 @@ class DatabaseHealthMonitor
                     udt_name
                 FROM information_schema.columns
                 WHERE table_name = ?
+                AND table_schema = current_schema()
                 ORDER BY ordinal_position
             ", [$table]);
 
@@ -366,7 +361,7 @@ class DatabaseHealthMonitor
             $result = DB::select("
                 SELECT constraint_name
                 FROM information_schema.table_constraints
-                WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'
+                WHERE table_name = ? AND table_schema = current_schema() AND constraint_type = 'PRIMARY KEY'
             ", [$table]);
             return !empty($result);
         }
@@ -408,7 +403,12 @@ class DatabaseHealthMonitor
                 JOIN pg_index ix ON t.oid = ix.indrelid
                 JOIN pg_class i ON i.oid = ix.indexrelid
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                JOIN pg_namespace n ON n.oid = t.relnamespace
                 WHERE t.relname = ?
+                AND n.nspname = current_schema()
+                -- Parciais (WHERE) e de expressão não são duplicatas do índice comum.
+                AND ix.indpred IS NULL
+                AND ix.indexprs IS NULL
                 ORDER BY i.relname, array_position(ix.indkey, a.attnum)
             ", [$table]);
 
@@ -423,7 +423,7 @@ class DatabaseHealthMonitor
         // Compara índices para encontrar duplicados
         $seen = [];
         foreach ($grouped as $name => $columns) {
-            sort($columns);
+            // A ordem importa: (a, b) e (b, a) servem a consultas diferentes.
             $key = implode(',', $columns);
             if (isset($seen[$key])) {
                 $duplicates[] = [
@@ -507,7 +507,9 @@ class DatabaseHealthMonitor
                 JOIN pg_index ix ON t.oid = ix.indrelid
                 JOIN pg_class i ON i.oid = ix.indexrelid
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                JOIN pg_namespace n ON n.oid = t.relnamespace
                 WHERE t.relname = ?
+                AND n.nspname = current_schema()
             ", [$table]);
             foreach ($result as $row) {
                 $indexed[] = $row->column_name;
@@ -533,9 +535,10 @@ class DatabaseHealthMonitor
         } elseif ($this->driver === 'pgsql') {
             // PostgreSQL não tem ENUM nativo do mesmo jeito, mas pode ter via CREATE TYPE
             $result = DB::select("
-                SELECT column_name, udt_name
+                SELECT column_name, udt_name, udt_schema
                 FROM information_schema.columns
                 WHERE table_name = ?
+                AND table_schema = current_schema()
                 AND data_type = 'USER-DEFINED'
             ", [$table]);
             foreach ($result as $row) {
@@ -544,10 +547,12 @@ class DatabaseHealthMonitor
                     SELECT enumlabel
                     FROM pg_enum
                     WHERE enumtypid = (
-                        SELECT oid FROM pg_type WHERE typname = ?
+                        SELECT t.oid FROM pg_type t
+                        JOIN pg_namespace n ON n.oid = t.typnamespace
+                        WHERE t.typname = ? AND n.nspname = ?
                     )
                     ORDER BY enumsortorder
-                ", [$row->udt_name]);
+                ", [$row->udt_name, $row->udt_schema]);
                 $enums[$row->column_name] = array_map(fn($v) => $v->enumlabel, $enumValues);
             }
         }
@@ -561,24 +566,6 @@ class DatabaseHealthMonitor
         $columnNames = array_map(fn($c) => $c->name, $columns);
 
         return in_array('created_at', $columnNames) && in_array('updated_at', $columnNames);
-    }
-
-    private function getNullableWithoutDefault(string $table): array
-    {
-        $columns = [];
-        $tableColumns = $this->getTableColumns($table);
-
-        foreach ($tableColumns as $column) {
-            $isNullable = $column->nullable ?? false;
-            $hasDefault = $column->default !== null;
-            $isAutoIncrement = ($column->extra ?? '') === 'auto_increment' || ($column->extra ?? '') === 'identity';
-
-            if ($isNullable && !$hasDefault && !$isAutoIncrement) {
-                $columns[] = $column->name;
-            }
-        }
-
-        return $columns;
     }
 
     private function getUnusedIndexes(string $table): array
@@ -597,6 +584,7 @@ class DatabaseHealthMonitor
                 AND CARDINALITY IS NOT NULL
                 AND CARDINALITY = 0
                 AND INDEX_NAME != 'PRIMARY'
+                AND NON_UNIQUE = 1
             ", [$table]);
 
             foreach ($result as $index) {
@@ -606,11 +594,15 @@ class DatabaseHealthMonitor
             // PostgreSQL não tem estatísticas de uso de índice tão fácil
             // Esta é uma verificação aproximada usando pg_stat_user_indexes
             $result = DB::select("
-                SELECT indexrelname
-                FROM pg_stat_user_indexes
-                WHERE relname = ?
-                AND idx_scan = 0
-                AND indexrelname NOT LIKE '%_pkey'
+                SELECT s.indexrelname
+                FROM pg_stat_user_indexes s
+                JOIN pg_index i ON i.indexrelid = s.indexrelid
+                WHERE s.relname = ?
+                AND s.schemaname = current_schema()
+                AND s.idx_scan = 0
+                -- UNIQUE/PK garantem integridade mesmo sem nenhum scan: nunca sugerir remover.
+                AND NOT i.indisunique
+                AND NOT i.indisprimary
             ", [$table]);
 
             foreach ($result as $index) {
@@ -635,7 +627,7 @@ class DatabaseHealthMonitor
                         WHEN 'bigint' THEN 18446744073709551615
                     END) as max_value
                 FROM information_schema.TABLES t
-                JOIN information_schema.COLUMNS c ON t.TABLE_NAME = c.TABLE_NAME
+                JOIN information_schema.COLUMNS c ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
                 WHERE t.TABLE_SCHEMA = DATABASE()
                 AND t.TABLE_NAME = ?
                 AND c.EXTRA = 'auto_increment'
@@ -667,7 +659,7 @@ class DatabaseHealthMonitor
                 LEFT JOIN pg_sequences seq ON seq.schemaname = n.nspname AND seq.sequencename = s.relname
                 WHERE s.relkind = 'S'
                 AND t.relname = ?
-                AND n.nspname = 'public'
+                AND n.nspname = current_schema()
             ", [$table]);
 
             if (!empty($result) && $result[0]->last_value) {
@@ -697,7 +689,7 @@ class DatabaseHealthMonitor
                     COLUMN_NAME,
                     CHARACTER_MAXIMUM_LENGTH
                 FROM information_schema.STATISTICS s
-                JOIN information_schema.COLUMNS c ON s.TABLE_NAME = c.TABLE_NAME AND s.COLUMN_NAME = c.COLUMN_NAME
+                JOIN information_schema.COLUMNS c ON s.TABLE_SCHEMA = c.TABLE_SCHEMA AND s.TABLE_NAME = c.TABLE_NAME AND s.COLUMN_NAME = c.COLUMN_NAME
                 WHERE s.TABLE_SCHEMA = DATABASE()
                 AND s.TABLE_NAME = ?
                 AND c.DATA_TYPE = 'varchar'
@@ -723,8 +715,10 @@ class DatabaseHealthMonitor
                 JOIN pg_index ix ON t.oid = ix.indrelid
                 JOIN pg_class i ON i.oid = ix.indexrelid
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
-                JOIN information_schema.columns c ON c.table_name = t.relname AND c.column_name = a.attname
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+                JOIN information_schema.columns c ON c.table_schema = n.nspname AND c.table_name = t.relname AND c.column_name = a.attname
                 WHERE t.relname = ?
+                AND n.nspname = current_schema()
                 AND c.data_type = 'character varying'
                 AND c.character_maximum_length > 255
             ", [$table]);

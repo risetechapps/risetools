@@ -2,44 +2,75 @@ name: run-tests
 
 on:
     push:
-        branches: [master]
+        branches: [main]
     pull_request:
-        branches: [master]
+        branches: [main]
 
 jobs:
     test:
-        runs-on: ${{ matrix.os }}
-        strategy:
-            fail-fast: true
-            matrix:
-                os: [ubuntu-latest, windows-latest]
-                php: [7.4, 8.0]
-                laravel: [8.*]
-                stability: [prefer-lowest, prefer-stable]
-                include:
-                    - laravel: 8.*
-                      testbench: ^6.6
+        runs-on: ubuntu-latest
 
-        name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+        name: PHP 8.4 - Laravel 12 - PostgreSQL 16
+
+        services:
+            postgres:
+                image: postgres:16
+                env:
+                    POSTGRES_USER: postgres
+                    POSTGRES_PASSWORD: postgres
+                    POSTGRES_DB: risetools_test
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U postgres"
+                    --health-interval 5s
+                    --health-timeout 5s
+                    --health-retries 10
+
+        env:
+            RISETOOLS_TEST_PGSQL: '1'
+            DB_HOST: 127.0.0.1
+            DB_PORT: 5432
+            DB_DATABASE: risetools_test
+            DB_USERNAME: postgres
+            DB_PASSWORD: postgres
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v2
+              uses: actions/checkout@v4
 
             - name: Setup PHP
               uses: shivammathur/setup-php@v2
               with:
-                  php-version: ${{ matrix.php }}
-                  extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo
+                  php-version: '8.4'
+                  extensions: dom, curl, mbstring, intl, gd, pdo, pdo_sqlite, sqlite3, pdo_pgsql, openssl, fileinfo
                   coverage: none
 
-            - name: Setup problem matchers
+            # pg_dump/psql na mesma versão do servidor (os testes de snapshot usam).
+            - name: Install PostgreSQL client
               run: |
-                  echo "::add-matcher::${{ runner.tool_cache }}/php.json"
-                  echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+                  sudo apt-get update
+                  sudo apt-get install -y postgresql-client-16
+                  echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
+            - name: Get Composer cache directory
+              id: composer-cache
+              run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+            - name: Cache Composer dependencies
+              uses: actions/cache@v4
+              with:
+                  path: ${{ steps.composer-cache.outputs.dir }}
+                  key: composer-${{ hashFiles('composer.json') }}
+                  restore-keys: composer-
+
             - name: Install dependencies
-              run: |
-                  composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
-                  composer update --${{ matrix.stability }} --prefer-dist --no-interaction
+              run: composer update --prefer-dist --no-interaction --no-progress
+
             - name: Execute tests
               run: vendor/bin/phpunit
+
+            # badssl.com: depende de rede externa, não bloqueia o build.
+            - name: Execute network tests
+              continue-on-error: true
+              run: vendor/bin/phpunit --group network

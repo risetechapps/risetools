@@ -2,7 +2,6 @@
 
 namespace RiseTechApps\RiseTools\Features\Domain;
 
-use Exception;
 use Iodev\Whois\Exceptions\ConnectionException;
 use Iodev\Whois\Exceptions\ServerMismatchException;
 use Iodev\Whois\Exceptions\WhoisException;
@@ -30,6 +29,12 @@ class Domain
 
     protected Rules $rules;
     protected ResolvedDomainName $resolvedDomainName;
+
+    /**
+     * Resultados das consultas de rede desta instância: cada DNS/SSL/WHOIS sai
+     * uma vez só, mesmo chamando getInfo() e os métodos avulsos.
+     */
+    protected array $memo = [];
 
     public function __construct(string $domain)
     {
@@ -111,16 +116,11 @@ class Domain
 
     public function getIp(): ?string
     {
-        $dns = new Dns();
+        return $this->remember('ip', function () {
+            $records = (new Dns())->getRecords($this->getFullHost(), 'A');
 
-        $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
-        $records = $dns->getRecords($domain, 'A');
-
-        if (count($records) > 0) {
-            return $records[0]->ip();
-        }
-        return null;
+            return count($records) > 0 ? $records[0]->ip() : null;
+        });
     }
 
     /**
@@ -128,43 +128,93 @@ class Domain
      */
     public function getDnsRecords(int $type = DNS_ALL): array
     {
-        $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
-        return dns_get_record($domain, $type) ?: [];
+        return $this->remember("dns:{$type}", fn() => @dns_get_record($this->getFullHost(), $type) ?: []);
     }
 
     /**
-     * Verifica se o domínio possui um SSL válido e retorna a data de expiração.
+     * Certificado SSL do host.
+     *
+     * - status: conseguiu ler o certificado.
+     * - is_trusted: a cadeia e o nome conferem (handshake verificado).
+     * - is_expired: passou da data de validade.
+     *
+     * Antes o handshake era sempre verificado, então um certificado expirado
+     * ou autoassinado derrubava a conexão e virava só status=false: o
+     * is_expired nunca saía true.
      */
     public function getSslInfo(): array
     {
+        return $this->remember('ssl', function () {
+            try {
+                $trusted = true;
+                $cert = $this->fetchCertificate(true);
+
+                if ($cert === null) {
+                    // Não verificou: tenta de novo sem verificar só para ler o
+                    // certificado (expirado, autoassinado, nome errado...).
+                    $trusted = false;
+                    $cert = $this->fetchCertificate(false);
+                }
+
+                if ($cert === null) {
+                    return ['status' => false, 'expires_at' => null];
+                }
+
+                $validTo = $cert['validTo_time_t'] ?? null;
+
+                return [
+                    'status' => true,
+                    'issuer' => $cert['issuer']['O'] ?? 'Unknown',
+                    'expires_at' => $validTo ? date('Y-m-d H:i:s', $validTo) : null,
+                    'is_expired' => $validTo ? now()->timestamp > $validTo : null,
+                    'is_trusted' => $trusted,
+                ];
+            } catch (\Throwable) {
+                return ['status' => false, 'expires_at' => null];
+            }
+        });
+    }
+
+    /**
+     * Abre a conexão TLS e devolve o certificado parseado, ou null.
+     */
+    protected function fetchCertificate(bool $verify): ?array
+    {
+        $context = stream_context_create(['ssl' => [
+            'capture_peer_cert' => true,
+            'verify_peer' => $verify,
+            'verify_peer_name' => $verify,
+            'allow_self_signed' => !$verify,
+            'SNI_enabled' => true,
+            'peer_name' => $this->getFullHost(),
+        ]]);
+
+        $client = @stream_socket_client(
+            "ssl://{$this->getFullHost()}:443",
+            $errno,
+            $errstr,
+            10,
+            STREAM_CLIENT_CONNECT,
+            $context
+        );
+
+        if (!$client) {
+            return null;
+        }
+
         try {
-
-            $domain = is_null($this->getSubDomain()) ? $this->getDomain() : $this->getSubDomain() . "." . $this->getDomain();
-
-            $context = stream_context_create(["ssl" => ["capture_peer_cert" => true]]);
-            $client = @stream_socket_client(
-                "ssl://{$domain}:443",
-                $errno,
-                $errstr,
-                10,
-                STREAM_CLIENT_CONNECT,
-                $context
-            );
-
-            if (!$client) return ['status' => false, 'expires_at' => null];
-
             $params = stream_context_get_params($client);
-            $cert = openssl_x509_parse($params['options']['ssl']['peer_certificate']);
+            $peer = $params['options']['ssl']['peer_certificate'] ?? null;
 
-            return [
-                'status' => true,
-                'issuer' => $cert['issuer']['O'] ?? 'Unknown',
-                'expires_at' => date('Y-m-d H:i:s', $cert['validTo_time_t']),
-                'is_expired' => now()->timestamp > $cert['validTo_time_t']
-            ];
-        } catch (Exception) {
-            return ['status' => false];
+            if (!$peer) {
+                return null;
+            }
+
+            $cert = openssl_x509_parse($peer);
+
+            return is_array($cert) ? $cert : null;
+        } finally {
+            fclose($client);
         }
     }
 
@@ -174,22 +224,24 @@ class Domain
      */
     public function isResolvable(): bool
     {
-        return checkdnsrr($this->getDomain(), "ANY");
+        return $this->remember('resolvable', fn() => checkdnsrr($this->getDomain(), "ANY"));
     }
 
     public function getWhoisExpiration(): ?string
     {
-        $whois = Factory::get()->createWhois();
+        return $this->remember('whois', function () {
+            $whois = Factory::get()->createWhois();
 
-        try {
-            $response = $whois->loadDomainInfo($this->getDomain());
-            if (!$response) {
+            try {
+                $response = $whois->loadDomainInfo($this->getDomain());
+                if (!$response || !$response->expirationDate) {
+                    return null;
+                }
+                return date('Y-m-d', $response->expirationDate);
+            } catch (ConnectionException|ServerMismatchException|WhoisException) {
                 return null;
             }
-            return date('Y-m-d', $response->expirationDate);
-        } catch (ConnectionException|ServerMismatchException|WhoisException) {
-            return null;
-        }
+        });
     }
 
     /**
@@ -198,13 +250,14 @@ class Domain
      */
     public function isPublished(): bool
     {
-        $dns = new \Spatie\Dns\Dns();
-        $records = $dns->getRecords($this->getDomain(), 'A');
+        return $this->remember('published', function () {
+            // Sem subdomínio é o mesmo host do getIp(): reaproveita a consulta A.
+            if ($this->getSubDomain() === null) {
+                return $this->getIp() !== null;
+            }
 
-        if (empty($records)) {
-            return false;
-        }
-        return true;
+            return !empty((new Dns())->getRecords($this->getDomain(), 'A'));
+        });
     }
 
     /**
@@ -222,6 +275,20 @@ class Domain
      * Retorna a URL completa com protocolo.
      * @param string $protocol (http ou https)
      */
+    /**
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    protected function remember(string $key, callable $callback): mixed
+    {
+        if (!array_key_exists($key, $this->memo)) {
+            $this->memo[$key] = $callback();
+        }
+
+        return $this->memo[$key];
+    }
+
     public function getUrl(string $protocol = 'http'): string
     {
         $protocol = str_replace(['://', '/'], '', $protocol);
@@ -229,14 +296,33 @@ class Domain
         return "{$protocol}://{$this->getFullHost()}";
     }
 
-    public function getInfo(): array
+    /**
+     * Todas as informações do domínio. Faz várias consultas de rede (DNS, SSL,
+     * WHOIS): passe $cacheSeconds para guardar o resultado no cache do Laravel
+     * e não repetir as consultas a cada chamada.
+     */
+    public function getInfo(?int $cacheSeconds = null): array
     {
-        // Open the SSL socket once and reuse it for both the 'ssl' payload and
-        // the canonical URL decision below.
+        if ($cacheSeconds !== null && $cacheSeconds > 0) {
+            return Cache::remember(
+                'risetools:domain:' . $this->getFullHost(),
+                $cacheSeconds,
+                fn() => $this->buildInfo()
+            );
+        }
+
+        return $this->buildInfo();
+    }
+
+    protected function buildInfo(): array
+    {
         $ssl = $this->getSslInfo();
 
-        // fullUrl reflects reality: https only when the host has a valid cert.
-        $canonicalProtocol = ($ssl['status'] ?? false) === true ? 'https' : 'http';
+        // fullUrl reflects reality: https only when the cert is readable, trusted and not expired.
+        $httpsOk = ($ssl['status'] ?? false) === true
+            && ($ssl['is_trusted'] ?? false) === true
+            && ($ssl['is_expired'] ?? true) === false;
+        $canonicalProtocol = $httpsOk ? 'https' : 'http';
 
         return [
             'domain' => $this->getDomain(),

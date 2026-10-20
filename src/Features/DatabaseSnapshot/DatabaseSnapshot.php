@@ -2,8 +2,11 @@
 
 namespace RiseTechApps\RiseTools\Features\DatabaseSnapshot;
 
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Exceptions\ToolNotFoundException;
+use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
 
 class DatabaseSnapshot
@@ -15,32 +18,52 @@ class DatabaseSnapshot
     public function __construct()
     {
         $this->disk = config('risetools.snapshot.disk', 'local');
-        $this->basePath = config('risetools.snapshot.path', 'snapshots');
+        $this->basePath = trim(config('risetools.snapshot.path', 'snapshots'), '/');
         $this->config = config('database.connections.' . config('database.default'));
     }
 
     /**
      * Cria um snapshot do banco de dados atual.
+     *
+     * O dump vai para um arquivo temporário local (sem passar pela memória do
+     * PHP) e depois é enviado por stream para o disco configurado, que pode
+     * ser remoto (S3 etc.).
      */
     public function create(string $name, ?callable $callback = null): bool
     {
         $driver = $this->config['driver'] ?? 'mysql';
-        $snapshotPath = $this->getSnapshotPath($name);
-
-        // Garante que o diretório existe
-        $this->ensureDirectoryExists();
 
         // Executa callback antes de criar (ex: seed banco)
         if ($callback) {
             $callback();
         }
 
-        return match ($driver) {
-            'mysql' => $this->createMysqlSnapshot($snapshotPath),
-            'pgsql' => $this->createPostgresSnapshot($snapshotPath),
-            'sqlite' => $this->createSqliteSnapshot($snapshotPath),
-            default => throw new \Exception("Driver '{$driver}' não suportado para snapshots"),
-        };
+        $temp = $this->temporaryPath();
+
+        try {
+            match ($driver) {
+                'mysql' => $this->createMysqlSnapshot($temp),
+                'pgsql' => $this->createPostgresSnapshot($temp),
+                'sqlite' => $this->createSqliteSnapshot($temp),
+                default => throw new \Exception("Driver '{$driver}' is not supported for snapshots."),
+            };
+
+            $stream = fopen($temp, 'r');
+
+            try {
+                if (!$this->filesystem()->writeStream($this->getSnapshotFile($name), $stream)) {
+                    throw new \Exception("Could not write snapshot '{$name}' to disk '{$this->disk}'.");
+                }
+            } finally {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }
+
+            return true;
+        } finally {
+            @unlink($temp);
+        }
     }
 
     /**
@@ -48,20 +71,31 @@ class DatabaseSnapshot
      */
     public function restore(string $name): bool
     {
-        $snapshotPath = $this->getSnapshotPath($name);
-
         if (!$this->exists($name)) {
-            throw new \Exception("Snapshot '{$name}' não encontrado em: {$snapshotPath}");
+            throw new \Exception("Snapshot '{$name}' not found at: {$this->getSnapshotFile($name)} (disk: {$this->disk})");
         }
 
         $driver = $this->config['driver'] ?? 'mysql';
 
-        return match ($driver) {
-            'mysql' => $this->restoreMysqlSnapshot($snapshotPath),
-            'pgsql' => $this->restorePostgresSnapshot($snapshotPath),
-            'sqlite' => $this->restoreSqliteSnapshot($snapshotPath),
-            default => throw new \Exception("Driver '{$driver}' não suportado para snapshots"),
-        };
+        if (!in_array($driver, ['mysql', 'pgsql', 'sqlite'], true)) {
+            throw new \Exception("Driver '{$driver}' is not supported for snapshots.");
+        }
+
+        // Baixa por stream para um arquivo local: as ferramentas de restore
+        // leem do disco, e o disco configurado pode ser remoto.
+        $temp = $this->temporaryPath();
+
+        try {
+            $this->downloadTo($this->getSnapshotFile($name), $temp);
+
+            return match ($driver) {
+                'mysql' => $this->restoreMysqlSnapshot($temp),
+                'pgsql' => $this->restorePostgresSnapshot($temp),
+                'sqlite' => $this->restoreSqliteSnapshot($temp),
+            };
+        } finally {
+            @unlink($temp);
+        }
     }
 
     /**
@@ -69,7 +103,7 @@ class DatabaseSnapshot
      */
     public function exists(string $name): bool
     {
-        return file_exists($this->getSnapshotPath($name));
+        return $this->filesystem()->exists($this->getSnapshotFile($name));
     }
 
     /**
@@ -77,21 +111,19 @@ class DatabaseSnapshot
      */
     public function list(): array
     {
-        $this->ensureDirectoryExists();
-        $path = Storage::disk($this->disk)->path($this->basePath);
-
-        if (!is_dir($path)) {
-            return [];
-        }
-
+        $filesystem = $this->filesystem();
         $snapshots = [];
-        $files = glob($path . '/*.{sql,sqlite,custom}', GLOB_BRACE);
 
-        foreach ($files as $file) {
+        foreach ($filesystem->files($this->basePath) as $file) {
+            if (!in_array(pathinfo($file, PATHINFO_EXTENSION), ['sql', 'sqlite'], true)) {
+                continue;
+            }
+
             $snapshots[] = [
-                'name' => basename($file),
-                'size' => $this->formatBytes(filesize($file)),
-                'created_at' => date('Y-m-d H:i:s', filemtime($file)),
+                // Sem extensão: é o nome que restore/delete esperam.
+                'name' => pathinfo($file, PATHINFO_FILENAME),
+                'size' => $this->formatBytes($filesystem->size($file)),
+                'created_at' => date('Y-m-d H:i:s', $filesystem->lastModified($file)),
                 'driver' => $this->config['driver'],
             ];
         }
@@ -104,13 +136,11 @@ class DatabaseSnapshot
      */
     public function delete(string $name): bool
     {
-        $path = $this->getSnapshotPath($name);
-
-        if (file_exists($path)) {
-            return unlink($path);
+        if (!$this->exists($name)) {
+            return false;
         }
 
-        return false;
+        return $this->filesystem()->delete($this->getSnapshotFile($name));
     }
 
     /**
@@ -133,19 +163,22 @@ class DatabaseSnapshot
     // MySQL Implementation
     private function createMysqlSnapshot(string $path): bool
     {
+        $this->ensureTool('mysqldump');
+
         $command = [
             'mysqldump',
             '--host=' . ($this->config['host'] ?? 'localhost'),
             '--port=' . ($this->config['port'] ?? '3306'),
             '--user=' . $this->config['username'],
-            '--password=' . $this->config['password'],
             '--single-transaction',
             '--quick',
             '--lock-tables=false',
+            // Escreve direto no arquivo, sem passar o dump pela memória do PHP.
+            '--result-file=' . $path,
             $this->config['database'],
         ];
 
-        $process = new Process($command);
+        $process = new Process($command, null, $this->mysqlEnv());
         $process->setTimeout(300);
         $process->run();
 
@@ -153,13 +186,14 @@ class DatabaseSnapshot
             throw new \Exception('mysqldump failed: ' . $process->getErrorOutput());
         }
 
-        file_put_contents($path, $process->getOutput());
-
         return true;
     }
 
     private function restoreMysqlSnapshot(string $path): bool
     {
+        // Antes do truncate: sem o cliente instalado, o banco não pode ser limpo.
+        $this->ensureTool('mysql');
+
         // Trunca todas as tabelas primeiro
         $this->truncateAllTables();
 
@@ -168,14 +202,22 @@ class DatabaseSnapshot
             '--host=' . ($this->config['host'] ?? 'localhost'),
             '--port=' . ($this->config['port'] ?? '3306'),
             '--user=' . $this->config['username'],
-            '--password=' . $this->config['password'],
             $this->config['database'],
         ];
 
-        $process = new Process($command);
-        $process->setInput(file_get_contents($path));
-        $process->setTimeout(300);
-        $process->run();
+        $input = fopen($path, 'r');
+
+        try {
+            $process = new Process($command, null, $this->mysqlEnv());
+            // Stream como entrada: o arquivo não é carregado inteiro na memória.
+            $process->setInput($input);
+            $process->setTimeout(300);
+            $process->run();
+        } finally {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+        }
 
         if (!$process->isSuccessful()) {
             throw new \Exception('mysql restore failed: ' . $process->getErrorOutput());
@@ -184,9 +226,34 @@ class DatabaseSnapshot
         return true;
     }
 
+    /**
+     * Falha cedo, com exceção própria, quando o binário não está no PATH. Assim
+     * "ferramenta ausente" não se confunde com erro da ferramenta (senha
+     * errada, banco inexistente...), que sai como exceção comum com o stderr.
+     */
+    private function ensureTool(string $binary): void
+    {
+        if ((new ExecutableFinder())->find($binary) === null) {
+            throw new ToolNotFoundException($binary);
+        }
+    }
+
+    /**
+     * Senha pelo ambiente do processo, não pelo argv: --password= aparece no
+     * `ps` para qualquer usuário da máquina.
+     */
+    private function mysqlEnv(): array
+    {
+        $password = (string) ($this->config['password'] ?? '');
+
+        return $password === '' ? [] : ['MYSQL_PWD' => $password];
+    }
+
     // PostgreSQL Implementation
     private function createPostgresSnapshot(string $path): bool
     {
+        $this->ensureTool('pg_dump');
+
         $command = [
             'pg_dump',
             '--host=' . ($this->config['host'] ?? 'localhost'),
@@ -196,6 +263,12 @@ class DatabaseSnapshot
             '--format=plain',
             '--no-owner',
             '--no-acl',
+            // DROP ... IF EXISTS antes de cada CREATE: o restore recria os
+            // objetos em vez de esbarrar em "already exists".
+            '--clean',
+            '--if-exists',
+            // Escreve direto no arquivo, sem passar o dump pela memória do PHP.
+            '--file=' . $path,
         ];
 
         $env = ['PGPASSWORD' => $this->config['password']];
@@ -208,14 +281,12 @@ class DatabaseSnapshot
             throw new \Exception('pg_dump failed: ' . $process->getErrorOutput());
         }
 
-        file_put_contents($path, $process->getOutput());
-
         return true;
     }
 
     private function restorePostgresSnapshot(string $path): bool
     {
-        $this->truncateAllTables();
+        $this->ensureTool('psql');
 
         $command = [
             'psql',
@@ -223,8 +294,20 @@ class DatabaseSnapshot
             '--port=' . ($this->config['port'] ?? '5432'),
             '--username=' . $this->config['username'],
             '--dbname=' . $this->config['database'],
+            '--no-psqlrc',
             '--file=' . $path,
         ];
+
+        if ($this->isCleanPostgresDump($path)) {
+            // Dump com --clean: derruba e recria tudo numa transação só. Qualquer
+            // erro aborta e faz rollback, o banco atual fica intacto.
+            $command[] = '--single-transaction';
+            $command[] = '--set=ON_ERROR_STOP=1';
+        } else {
+            // Snapshot antigo (sem --clean): os CREATE falham com "already exists"
+            // e são ignorados, então limpa os dados antes para o COPY entrar.
+            $this->truncateAllTables();
+        }
 
         $env = ['PGPASSWORD' => $this->config['password']];
 
@@ -248,7 +331,7 @@ class DatabaseSnapshot
             throw new \Exception("SQLite database not found: {$databasePath}");
         }
 
-        // Usiza SQLite online backup API se disponível, senão cópia simples
+        // Usa a SQLite online backup API
         $this->sqliteBackup($databasePath, $path);
 
         return true;
@@ -261,8 +344,9 @@ class DatabaseSnapshot
         // Fecha conexões ativas
         DB::disconnect();
 
-        // Copia o arquivo
-        copy($path, $databasePath);
+        if (!copy($path, $databasePath)) {
+            throw new \Exception("Could not copy the snapshot to the SQLite database: {$databasePath}");
+        }
 
         return true;
     }
@@ -282,57 +366,136 @@ class DatabaseSnapshot
         $sourceDb->close();
     }
 
+    /**
+     * Dump gerado com --clean traz os DROP antes do primeiro CREATE.
+     */
+    private function isCleanPostgresDump(string $path): bool
+    {
+        $handle = fopen($path, 'r');
+
+        if (!$handle) {
+            return false;
+        }
+
+        try {
+            while (($line = fgets($handle)) !== false) {
+                if (str_starts_with($line, 'DROP ')) {
+                    return true;
+                }
+
+                if (str_starts_with($line, 'CREATE ') || str_starts_with($line, 'COPY ')) {
+                    return false;
+                }
+            }
+
+            return false;
+        } finally {
+            fclose($handle);
+        }
+    }
+
     private function truncateAllTables(): void
     {
         $driver = $this->config['driver'] ?? 'mysql';
         $tables = $this->getAllTables();
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-
-        foreach ($tables as $table) {
-            if ($driver === 'mysql') {
-                DB::statement("TRUNCATE TABLE `{$table}`");
-            } elseif ($driver === 'pgsql') {
-                DB::statement("TRUNCATE TABLE \"{$table}\" RESTART IDENTITY CASCADE");
-            } elseif ($driver === 'sqlite') {
-                DB::statement("DELETE FROM `{$table}`");
-                DB::statement("DELETE FROM sqlite_sequence WHERE name = '{$table}'");
-            }
+        if (empty($tables)) {
+            return;
         }
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        if ($driver === 'mysql') {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+
+            try {
+                foreach ($tables as $table) {
+                    DB::statement('TRUNCATE TABLE `' . str_replace('`', '``', $table) . '`');
+                }
+            } finally {
+                DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            }
+        } elseif ($driver === 'pgsql') {
+            // Um TRUNCATE só com todas as tabelas: o Postgres resolve as FKs entre elas.
+            $list = implode(', ', array_map(
+                fn($table) => '"' . str_replace('"', '""', $table) . '"',
+                $tables
+            ));
+
+            DB::statement("TRUNCATE TABLE {$list} RESTART IDENTITY CASCADE");
+        }
     }
 
+    /**
+     * @return array<int, string>
+     */
     private function getAllTables(): array
     {
         $driver = $this->config['driver'] ?? 'mysql';
 
-        return match ($driver) {
+        $rows = match ($driver) {
             'mysql' => DB::select('SHOW TABLES'),
-            'pgsql' => DB::select("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"),
+            'pgsql' => DB::select('SELECT tablename FROM pg_tables WHERE schemaname = current_schema()'),
             'sqlite' => DB::select("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"),
             default => [],
         };
+
+        // Cada linha é um stdClass de uma coluna (o nome varia por driver).
+        return array_map(fn($row) => (string) array_values((array) $row)[0], $rows);
     }
 
-    private function getSnapshotPath(string $name): string
+    private function filesystem(): Filesystem
+    {
+        return Storage::disk($this->disk);
+    }
+
+    /**
+     * Caminho do snapshot relativo ao disco (não um caminho local).
+     */
+    private function getSnapshotFile(string $name): string
     {
         $extension = match ($this->config['driver'] ?? 'mysql') {
             'sqlite' => 'sqlite',
             default => 'sql',
         };
 
+        // Aceita o nome com a extensão (como aparecia no snapshot-list antigo).
+        if (str_ends_with($name, '.' . $extension)) {
+            $name = substr($name, 0, -strlen('.' . $extension));
+        }
+
         $filename = str_replace(['/', '\\'], '_', $name) . '.' . $extension;
 
-        return Storage::disk($this->disk)->path($this->basePath . '/' . $filename);
+        return ltrim($this->basePath . '/' . $filename, '/');
     }
 
-    private function ensureDirectoryExists(): void
+    private function temporaryPath(): string
     {
-        $path = Storage::disk($this->disk)->path($this->basePath);
+        $path = tempnam(sys_get_temp_dir(), 'risetools-snapshot-');
 
-        if (!is_dir($path)) {
-            mkdir($path, 0755, true);
+        if ($path === false) {
+            throw new \Exception('Could not create a temporary file for the snapshot.');
+        }
+
+        return $path;
+    }
+
+    private function downloadTo(string $file, string $localPath): void
+    {
+        $source = $this->filesystem()->readStream($file);
+
+        if (!is_resource($source)) {
+            throw new \Exception("Could not read snapshot file '{$file}' from disk '{$this->disk}'.");
+        }
+
+        $target = fopen($localPath, 'w');
+
+        try {
+            stream_copy_to_stream($source, $target);
+        } finally {
+            fclose($target);
+
+            if (is_resource($source)) {
+                fclose($source);
+            }
         }
     }
 

@@ -5,13 +5,13 @@ namespace RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\Console;
 use Illuminate\Console\Command;
 use RiseTechApps\RiseTools\Features\DatabaseHealthMonitor\DatabaseHealthMonitor;
 
-class HealthCheckCommand extends Command
+class DatabaseHealthCommand extends Command
 {
     protected $signature = 'risetools:db-health
                             {--table= : Check only a specific table}
                             {--severity= : Filter by severity (critical, warning, info)}
-                            {--json : Export JSON result}
-                            {--export= : Save Report to File}';
+                            {--json : Print the report as JSON}
+                            {--export= : Save the report as JSON to a file}';
 
     protected $description = 'Checks database health';
 
@@ -23,45 +23,46 @@ class HealthCheckCommand extends Command
 
     public function handle(DatabaseHealthMonitor $monitor): int
     {
-        $this->info('Analyzing health from the database...');
-        $this->newLine();
+        $severity = $this->option('severity');
 
-        $results = $monitor->run();
-        $summary = $monitor->getSummary();
-
-        // Filtra por severidade se especificado
-        if ($this->option('severity')) {
-            $severity = $this->option('severity');
-            $results = array_filter($results, fn($r) => $r['severity'] === $severity);
+        if ($severity && !isset($this->icons[$severity])) {
+            $this->error("Invalid severity '{$severity}'. Use: " . implode(', ', array_keys($this->icons)) . '.');
+            return self::FAILURE;
         }
 
-        // Filtra por tabela se especificado
-        if ($this->option('table')) {
-            $table = $this->option('table');
-            $results = array_filter($results, fn($r) => $r['table'] === $table);
+        // Com --json a saída precisa ser só o JSON (para ser lida por jq/CI).
+        if (!$this->option('json')) {
+            $this->info('Analyzing database health...');
+            $this->newLine();
         }
 
-        // Exporta JSON
+        // Só a tabela pedida, em vez de varrer o banco inteiro e filtrar depois.
+        $results = $this->option('table')
+            ? $monitor->runForTable($this->option('table'))
+            : $monitor->run();
+
+        if ($severity) {
+            $results = array_values(array_filter($results, fn($r) => $r['severity'] === $severity));
+        }
+
+        // Resumo, JSON e export refletem os mesmos filtros da listagem.
+        $summary = $monitor->getSummary($results);
+
         if ($this->option('json')) {
-            $report = $monitor->generateReport();
-            $this->line(json_encode($report, JSON_PRETTY_PRINT));
-            return self::SUCCESS;
+            $this->line(json_encode($monitor->generateReport($results), JSON_PRETTY_PRINT));
+            return $this->exitCode($summary);
         }
 
-        // Salva em arquivo
         if ($this->option('export')) {
             $path = $this->option('export');
-            $report = $monitor->generateReport();
-            file_put_contents($path, json_encode($report, JSON_PRETTY_PRINT));
-            $this->info("Relatório salvo em: {$path}");
-            return self::SUCCESS;
+            file_put_contents($path, json_encode($monitor->generateReport($results), JSON_PRETTY_PRINT));
+            $this->info("Report saved to: {$path}");
+            return $this->exitCode($summary);
         }
 
-        // Exibe resumo
         $this->displaySummary($summary);
         $this->newLine();
 
-        // Exibe problemas encontrados
         if (empty($results)) {
             $this->info('✅ No problems found! The database is healthy.');
             return self::SUCCESS;
@@ -69,18 +70,21 @@ class HealthCheckCommand extends Command
 
         $this->displayIssues($results);
 
-        // Retorna código de erro se houver problemas críticos
-        if ($summary['critical'] > 0) {
-            return self::FAILURE;
-        }
+        return $this->exitCode($summary);
+    }
 
+    /**
+     * Falha (código != 0) quando há problema crítico ou aviso: útil em CI.
+     */
+    private function exitCode(array $summary): int
+    {
         return $summary['healthy'] ? self::SUCCESS : self::FAILURE;
     }
 
     private function displaySummary(array $summary): void
     {
         $this->table(
-            ['Métrica', 'Valor'],
+            ['Metric', 'Value'],
             [
                 ['Total Problems', $summary['total_issues']],
                 ['Critical ❌', $summary['critical']],
@@ -111,7 +115,7 @@ class HealthCheckCommand extends Command
             }
 
             $icon = $this->icons[$severity];
-            $this->warn("{$icon} Problemas {$severity}:");
+            $this->warn("{$icon} " . ucfirst($severity) . ' problems:');
             $this->newLine();
 
             foreach ($grouped[$severity] as $issue) {
@@ -119,7 +123,7 @@ class HealthCheckCommand extends Command
                 $this->line("  └─ {$issue['message']}");
 
                 if (isset($issue['details'])) {
-                    $this->line("  └─ Detalhes: " . json_encode($issue['details']));
+                    $this->line("  └─ Details: " . json_encode($issue['details']));
                 }
 
                 if (isset($issue['suggestion'])) {

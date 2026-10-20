@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Log;
 class NPlusOneDetector
 {
     private static bool $enabled = false;
+    /** Dispatcher onde o listener já está registrado (fraca: não segura o app vivo). */
+    private static ?\WeakReference $listeningOn = null;
     private static int $threshold = 5;
     private static bool $reportToLog = false;
     private static bool $reportToSentry = false;
@@ -68,7 +70,22 @@ class NPlusOneDetector
             return;
         }
 
+        // Um listener por dispatcher: enable() chamado de novo (outro request no
+        // Octane, outro job no worker) não empilha listeners. Se o app foi
+        // recriado (dispatcher novo), registra de novo nele.
+        $events = app('events');
+
+        if (self::$listeningOn?->get() === $events) {
+            return;
+        }
+
+        self::$listeningOn = \WeakReference::create($events);
+
         DB::listen(function ($query): void {
+            if (!self::$enabled) {
+                return;
+            }
+
             try {
                 if ((mt_rand() / mt_getrandmax()) > self::$sampleRate) {
                     return;
@@ -178,6 +195,12 @@ class NPlusOneDetector
             'trace' => self::getRelevantTrace($queryData['first_occurrence'] ?? []),
         ];
 
+        self::$suspiciousPatterns[$pattern] = [
+            'table' => $report['table'],
+            'count' => $report['count'],
+            'sql_sample' => $report['sql_sample'],
+        ];
+
         self::sendReport($report);
     }
 
@@ -229,12 +252,14 @@ class NPlusOneDetector
 
         $modelGuess = self::guessModelFromTable($table);
 
-        $suggestion['problem'] = "Múltiplas queries para a tabela '{$table}' detectadas";
-        $suggestion['likely_cause'] = "Acesso a relacionamento sem eager loading";
+        $suggestion['problem'] = "Multiple queries detected for table '{$table}'";
+        $suggestion['likely_cause'] = 'Relationship accessed without eager loading';
 
         if (!empty($modelGuess)) {
-            $suggestion['recommended_fix'] = "Adicione ->with(['relation']) ao carregar {$modelGuess}";
-            $suggestion['code_example'] = "{$modelGuess}::with(['comments'])->get();";
+            // O detector não sabe qual relação foi acessada: o exemplo usa um
+            // placeholder em vez de inventar um nome.
+            $suggestion['recommended_fix'] = "Eager load the relationship that returns {$modelGuess} on the parent query: ->with('<relation>')";
+            $suggestion['code_example'] = "ParentModel::with('<relation>')->get();";
         }
 
         $bindingSamples = $queryData['bindings_samples'] ?? [];
@@ -243,7 +268,7 @@ class NPlusOneDetector
             $ids = array_slice($ids, 0, 5);
             $idsList = implode(', ', $ids);
 
-            $suggestion['alternative_fix'] = "Use whereIn() para carregar todos de uma vez";
+            $suggestion['alternative_fix'] = 'Use whereIn() to load all of them at once';
             $suggestion['whereIn_example'] = "{$modelGuess}::whereIn('id', [{$idsList}])->get();";
         }
 
@@ -404,6 +429,11 @@ class NPlusOneDetector
         return array_slice($queries, 0, 10, true);
     }
 
+    /**
+     * Zera as contagens. Chamado no início de cada request (Octane) e de cada
+     * job (fila): o estado é estático e, sem isso, vazava de uma unidade de
+     * trabalho para a outra e gerava falso positivo.
+     */
     public static function clearStats(): void
     {
         self::$queries = [];

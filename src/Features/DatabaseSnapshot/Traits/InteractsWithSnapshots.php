@@ -14,7 +14,7 @@ trait InteractsWithSnapshots
         $snapshot = app(DatabaseSnapshot::class);
 
         if (!$snapshot->exists($name)) {
-            throw new \Exception("Snapshot '{$name}' não encontrado. Crie com: php artisan snapshot:create {$name}");
+            throw new \Exception("Snapshot '{$name}' not found. Create it with: php artisan risetools:snapshot-create {$name}");
         }
 
         $snapshot->restore($name);

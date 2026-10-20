@@ -21,13 +21,13 @@ class SnapshotDeleteCommand extends Command
             return self::FAILURE;
         }
 
-        if (!$this->confirm("Want to remove the snapshot '{$name}'?")) {
+        if (!$this->confirm("Do you want to remove the snapshot '{$name}'?")) {
             $this->info('Operation canceled.');
             return self::SUCCESS;
         }
 
         if ($snapshot->delete($name)) {
-            $this->info("Snapshot '{$name}' Successfully Removed.");
+            $this->info("Snapshot '{$name}' removed successfully.");
             return self::SUCCESS;
         }
 

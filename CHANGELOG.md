@@ -3,146 +3,98 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
-## [3.1.0]
+## [1.0.0] - 2026-10-20
 
-### Changed
-- `Device::info(bool $withGeoIp = true)`: o geo (chamada HTTP externa) passa a ser opcional. Quem chama no caminho do request deve passar `false` — o monitoring-for-laravel passa a fazer isso por padrão. Sem argumento, o comportamento é o mesmo de antes.
+> **Primeira versão estável.** As versões publicadas antes (1.0.0 a 3.1.0, de nov/2025 a out/2026) eram de teste e foram retiradas; o histórico delas não vale para esta linha. Quem usava uma versão de teste: veja [Migrando das versões de teste](#migrando-das-versões-de-teste--310) abaixo e no README. Pacotes que pediam `^3.1.0` passam a pedir `^1.0`.
 
-### Fixed
-- **Falha do geo não era cacheada**: com o provedor fora do ar ou limitando (ip-api grátis = 45 req/min), todo request pagava de novo até 6s de timeout. Agora a falha fica em cache negativo por `risetools.geoip.failure_ttl_minutes` (10).
-- **IP privado/reservado** (rede interna, localhost) era consultado em todo request e sempre falhava; agora retorna vazio sem chamada.
-- **Cache do geo por tenant**: pelo `Cache` facade, num app com tenancy, a chave ganhava o prefixo do tenant/filial/usuário e quase nunca era reaproveitada. Agora usa um store resolvido direto da config (`risetools.geoip.cache_store`), sem esse prefixo.
+Requer PHP 8.4 e Laravel 12.
 
-### Added
-- Config `risetools.geoip` (`enabled`, `url`, `connect_timeout`, `timeout`, `failure_ttl_minutes`, `cache_store`).
+### Recursos
 
-## [3.0.2] - 2026-07-20
-- Corrigido nome do comando de **rise:doctor** para **risetools:doctor**
+**Respostas da API**
+- Macros `jsonSuccess` (200), `jsonCreated` (201), `jsonNoContent` (204, sem corpo), `jsonUnauthorized` (401), `jsonForbidden` (403), `jsonNotFound` (404), `jsonGone` (410), `jsonError` (422), `jsonValidation` (422, com `errors` no formato do Laravel) e `jsonInternal` (500), no envelope `success`/`code`/`message`/`data`.
+- `JsonResource` passa pelo `->response()` do Laravel: coleções paginadas trazem `meta` e `links`, e `with()`/`additional()` são mantidos, sem sobrescrever o envelope. `[]` vira `"data": []`; `null` omite `data`.
+- `JsonExceptionRenderer::register($exceptions)` (opcional): exceções em requests JSON/`api/*` saem no mesmo envelope; `ModelNotFoundException` não expõe a classe; headers de `HttpException` mantidos; detalhes do 500 só com `APP_DEBUG`.
 
-## [3.0.1] - 2026-07-18
+**Facade e config**
+- Facade `RiseTools`: `avatar()`, `domain()`, `email()`, `device()`, `clientIp()`, `mask()`, `snapshot()`, `dbHealth()`, `nPlusOne()`, `doctor()`.
+- Config publicável: `php artisan vendor:publish --tag=risetools-config`; tudo configurável também por `.env`.
+- Helpers: `avatarGenerator()`, `MaskInput()`, `domainTools()`, `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`.
 
-> Vários itens abaixo restauram recursos e correções que existiam na 2.0.0 e foram perdidos na reescrita da 3.0.0 (features de banco/e-mail, PSL, `is_null` do MaskInput, duplicação de `fullUrl`).
+**AvatarGenerator**
+- Avatar circular com gradiente e iniciais, cores consistentes por nome; PNG (GD), base64, arquivo ou Storage.
+- SVG (`generateSvg()`, `generateSvgDataUri()`) sem GD.
+- Cor do texto (branco ou cinza-escuro) pelo contraste WCAG com o gradiente; cantos transparentes com borda suavizada.
 
-### Added
-- **EmailValidator** — restaurado (removido acidentalmente na 3.0.0).
-- **NPlusOneDetector** — restaurado.
-- **DatabaseSnapshot** (classe, trait `InteractsWithSnapshots` e comandos `risetools:snapshot:create|restore|list|delete`) — restaurado.
-- **DatabaseHealthMonitor** (classe + comando `risetools:db-health`) — restaurado.
-- **Helpers**: `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`.
-- **ServiceProvider**: registra os comandos de snapshot e db-health e os singletons de EmailValidator, NPlusOneDetector, DatabaseSnapshot e DatabaseHealthMonitor.
-- **Config**: seção `risetools.snapshot` (disk/path) e `mergeConfigFrom` sob a chave `risetools`.
+**MaskInput**
+- Máscara livre (`###.###.###-##`) e presets `cpf()`, `cnpj()` (inclusive CNPJ alfanumérico), `document()`, `cep()`, `phone()` e `unmask()`, com constantes das máscaras.
 
-### Fixed
-- **Device**: `getGeoIP()` agora usa timeout (connect 2s / total 4s) e cache por IP (24h), evitando travar a request e estourar o limite do `ip-api.com`. Só cacheia respostas `status: success`.
-- **Device**: Removido cache estático `self::$cached`, que vazava dados de dispositivo/geo entre requests em ambientes persistentes (Octane/Swoole).
-- **Domain**: O Public Suffix List deixou de ser baixado da URL a cada `new Domain()`. Agora usa cache do Laravel (7 dias), memo por processo e cópia local empacotada como fallback offline — sem download no caminho da request e sem quebrar sem internet.
-- **AvatarGenerator**: `extractInitials()` retorna `"U"` para nome vazio (branch antes inalcançável) e usa funções multibyte (`mb_*`), corrigindo iniciais de nomes acentuados.
-- **Domain**: `getInfo()` — `fullUrl` agora usa `https` apenas quando há SSL válido (deixou de ser cópia de `url`); `getSslInfo()` é chamado uma única vez e reutilizado.
-- **MaskInput**: Removida verificação `is_null` redundante (parâmetro já tipado como `string`).
+**Device**
+- Dispositivo, navegador e plataforma pelo `User-Agent` do request (seguro no Octane).
+- IP do cliente por `request()->ip()` (respeita o TrustProxies); `CF-Connecting-IP` só com opt-in.
+- Geolocalização opcional (ip-api), com cache por IP, cache negativo de falha, timeout curto e sem consulta para IP privado.
 
-### Changed
-- **Domain**: Adicionado arquivo `src/Features/Domain/public_suffix_list.dat` empacotado como fallback do PSL. O cache de 7 dias requer um driver de cache persistente (não `array`).
-- **Dependencies**: Declaradas dependências antes ausentes — `symfony/process` (DatabaseSnapshot), `guzzlehttp/guzzle` e `hisorange/browser-detect` (Device).
+**Domain**
+- Domínio registrável e subdomínio (Public Suffix List com cache, memo por processo e cópia embutida para uso offline), IP, DNS, SSL (`status`, `is_trusted`, `is_expired`, emissor, validade), WHOIS e `getInfo(?int $cacheSeconds)`.
+- Consultas de rede memorizadas por instância; `fullUrl` só em https com certificado confiável e válido.
 
-### Docs
-- README: requisito de PHP atualizado para 8.4+, Orchestra Testbench 10.x e spatie/dns 2.8.1.
-- README: corrigido exemplo do helper de máscara (`MaskInput()`, não `mask_input()`).
-- README: nova seção **NPlusOneDetector** com exemplos de uso, estatísticas, integração com Sentry e a ressalva de que a escuta exige `NPlusOneDetector::enable()`.
+**EmailValidator**
+- Formato, MX (ou A), descartável (inclui subdomínios), genérico/role-based e verificação SMTP com respostas multi-linha.
+- Regras `Rules\NotDisposableEmail` e `Rules\NotRoleBasedEmail`.
+- `risetools:email-disposable-update`: baixa a lista completa de descartáveis (recusa download com menos de 100 domínios); recarregada sozinha quando o arquivo muda; extras por config.
+- Cache dos lookups de MX/A por domínio.
 
-## [3.0.0] - 2026-07-17
+**AtomicJobChain**
+- Cadeia de jobs que para na primeira falha, com `then`/`catch`/`finally`, `onStepComplete`, despacho após o commit da transação, nome e tags para o Horizon.
 
-### Changed
-- Corrigidos parâmetros e funções obsoletas em PHP 8.4
-- Atualizados os pacotes de dependências
-- Requisito mínimo elevado para PHP 8.4
+**NPlusOneDetector**
+- Detecção de N+1 em tempo de execução por padrão de SQL, com amostragem, sugestão de correção, log e Sentry.
+- Um listener por dispatcher e estado zerado a cada job da fila e request do Octane.
 
-### Removed
-- **EmailValidator** — removido
-- **NPlusOneDetector** — removido
-- **DatabaseSnapshot** (e comandos `risetools:snapshot:*`, trait `InteractsWithSnapshots`) — removido
-- **DatabaseHealthMonitor** (e comando `risetools:db:health`) — removido
-- Helpers relacionados: `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`
+**DatabaseSnapshot**
+- `risetools:snapshot-create|restore|list|delete` e trait `InteractsWithSnapshots` para testes; PostgreSQL, MySQL e SQLite.
+- Qualquer disco do Laravel (S3 etc.) por stream, sem o dump passar pela memória do PHP.
+- PostgreSQL: dump com `--clean --if-exists` e restore em transação única com `ON_ERROR_STOP` (erro faz rollback).
+- MySQL: senha por `MYSQL_PWD`, fora da linha de comando.
+- Cliente do banco ausente detectado antes de tocar no banco (`Exceptions\ToolNotFoundException`), com o pacote certo para instalar.
 
-> Estes recursos existiam na 2.0.0 e foram removidos nesta versão de forma não intencional durante a reescrita. Foram **restaurados na 3.0.1**.
+**DatabaseHealthMonitor**
+- `risetools:db-health` com `--table`, `--severity`, `--json` e `--export`; código de saída `1` com problema (útil em CI).
+- Checks: sem chave primária, auto increment perto do limite, índices duplicados (mesma ordem, ignora parciais/expressão), `*_id` sem índice, índices possivelmente sem uso (nunca UNIQUE/PK), JSON em tabela grande, ENUM grande, VARCHAR longo indexado, sem timestamps; checks próprios com `addCheck()`.
+- Driver pela config da conexão; no PostgreSQL, filtro por `current_schema()`.
 
-## [2.0.0] - 2026-04-28
+**Doctor**
+- `risetools:doctor` (com `--json`): security, config, database, migrations, redis, cache, storage, disk, queue, failed-jobs, smtp, scheduler (heartbeat agendado pelo pacote) e horizon.
+- Checks padrão conforme o app (redis só se usado; scheduler e horizon em produção); checks próprios por `addCheck()` ou config.
+- Rotas opcionais `GET /health/live` e `GET /health/ready` (200/503), com token ou lista de IPs/CIDRs para ver o detalhe dos checks.
 
-### Added
-- **EmailValidator**: Validação de e-mails em múltiplos níveis (formato, MX, SMTP), detecção de e-mails temporários e role-based
-- **NPlusOneDetector**: Detecção automática de queries N+1 em tempo real com sugestões de eager loading
-- **DatabaseSnapshot**: Snapshots ultra-rápidos do banco para testes (suporta MySQL, PostgreSQL, SQLite)
-- **DatabaseHealthMonitor**: Verificação completa de saúde do banco (PKs, índices duplicados, FKs sem índice, auto increment, etc)
-- **Comandos Artisan**: Novos comandos com prefixo `risetools:`
-    - `risetools:snapshot:create|restore|list|delete`
-    - `risetools:db:health`
-- **Helpers**: `email_validator()`, `n_plus_one_detector()`, `database_snapshot()`, `db_health_monitor()`
-- **Traits**: `InteractsWithSnapshots` para uso em testes PHPUnit
-- Suporte multi-driver (MySQL, PostgreSQL, SQLite) em DatabaseSnapshot e DatabaseHealthMonitor
+**Qualidade**
+- 118 testes (PHPUnit + Testbench) mais 4 de rede; testes de PostgreSQL no CI.
+- CI no GitHub Actions: PHP 8.4, Laravel 12, PostgreSQL 16.
 
-### Changed
-- **Prefixo em comandos**: Todos os comandos agora usam prefixo `risetools:` para evitar conflitos
-- **Device**: Substituição de superglobals (`$_GET`, `$_SERVER`) por `request()` para permitir mocking em testes
-- **Domain**: Cache estático do Public Suffix List para evitar downloads repetidos
-- **AvatarGenerator**: Fallback de fontes do sistema quando `roboto.ttf` não existe
+### Migrando das versões de teste (≤ 3.1.0)
 
-### Fixed
-- **MaskInput**: Removida verificação `is_null` redundante (parâmetro já é tipado como `string`)
-- **Domain**: Resource leak em `getSslInfo()` (adicionado `fclose`)
-- **Domain**: Redundância de código refatorada para usar `getFullHost()`
-- **Domain**: `isPublished()` agora verifica HTTP 200 ao invés de apenas DNS
-- **Domain**: Removida chave duplicada `fullUrl` em `getInfo()`
-- **Composer**: Corrigido caminho do autoload de helpers (sem barra inicial)
-- **NPlusOneDetector**: Correção de conflito de nomes de métodos
+Mudanças de comportamento para quem usava uma versão de teste:
 
-### Removed
-- Suporte a comandos sem prefixo (agora requerem `risetools:`)
-- 
-## [1.8.3] - 2026-04-02
-- Corrigido validação de getCode no exception
+- **IP do cliente**: `Device::getClientPublicIp()` não confia mais em `CF-Connecting-IP`/`X-Forwarded-For`/`X-Real-IP` vindos de qualquer cliente (eram forjáveis). Configure o TrustProxies; para Cloudflare, `RISETOOLS_TRUST_CLOUDFLARE_HEADER=true` ou os IPs dela no `trustProxies`.
+- **`?agent=` removido**: o user agent vem só do header do request.
+- **Geolocalização desligada por padrão** (LGPD): `RISETOOLS_GEOIP_ENABLED=true` para manter `geo_ip` preenchido.
+- **Respostas JSON**: `jsonSuccess([])` traz `"data": []`; Resources paginadas trazem `meta`/`links`; `jsonGone()` tem a mensagem padrão `Resource no longer available.`.
+- **Mensagens em inglês** nos comandos de snapshot e exceções do `DatabaseSnapshot`.
+- **Classes renomeadas**: `Features\HealthCheck\HealthCheckCommand` → `DoctorCommand`; `Features\DatabaseHealthMonitor\Console\HealthCheckCommand` → `DatabaseHealthCommand` (nomes no artisan iguais).
+- **db-health**: `--json`/`--export` saem com `1` quando há problema; check `nullable_without_default` removido; no relatório, `database.connection` é o nome da conexão e o banco vai em `database.database`.
+- **Snapshots do PostgreSQL** gerados com `--clean --if-exists`; snapshots antigos continuam restaurando.
+- **AvatarGenerator**: em gradientes claros o texto passa a ser escuro.
+- **Scheduler**: o pacote agenda um heartbeat por minuto (`RISETOOLS_SCHEDULER_HEARTBEAT=false` desliga).
 
-## [1.8.2] - 2026-03-17
-- Corrigido falhas de nullable
+### Corrigido em relação às versões de teste
 
-## [1.8.1] - 2026-03-17
-- Refatorado classe AtomicJobChain para melhor gerenciamento de jobs e falhas
- 
-## [1.8.0] - 2026-03-13
-- Refatorado classe AtomicJobChain para melhor gerenciamento de jobs e falhas
-
-## [1.7.0] - 2026-02-03
-### Added
-- Corrigido incompatibilidade de variável
-
-## [1.6.0] - 2026-01-24
-### Added
-- Class AtomicJobChain foi implementado suporte para callback de onSuccess, onFailure e onFinally
-- Class AtomicJobChain foi implementado suporte de display name do laravel horizon
-
-## [1.5.1] - 2025-12-26
-### Added
-- Corrigido verificação de domínio
-
-## [1.5.0] - 2025-12-24
-### Added
-- Criado função para getUrl e getUrl no domínio
-
-## [1.4.0] - 2025-12-22
-### Added
-- Criado Classe Domain para gerenciar infomações sobre domínios
-
-## [1.3.0] - 2025-12-15
-### Added
-- Criado Classe AtomicJobChain para gerenciar jobs e listeners
-
-
-## [1.2.0] - 2025-12-10
-### Added
-- Criado helper MaskInput para mascarar inputs.
-
-## [1.1.0] - 2025-11-30
-### Added
-- Implementado função para gerar imagens avatar para o perfil.
-
-## [1.0.0] - 2025-11-11
-### Added
-- Lançamento inicial (Primeira versão estável).
+- Restore de snapshot quebrado em MySQL e PostgreSQL; `snapshot-list` quebrava no Alpine e mostrava nomes que `restore`/`delete` não achavam; "Tool not found" aparecia para qualquer erro do `pg_dump`.
+- db-health não rodava checks em conexões com nome diferente do driver, misturava schemas no PostgreSQL, ignorava filtros no `--json`/`--export` e sugeria remover índices UNIQUE.
+- doctor falhava em app sem Redis e carregava todos os failed jobs na memória.
+- NPlusOneDetector dobrava contagens a cada `enable()` e vazava estado entre requests/jobs.
+- EmailValidator marcava "rhaissa@" como genérico e desalinhava a conversa SMTP em respostas multi-linha.
+- Domain nunca reportava certificado expirado (`is_expired`).
+- AvatarGenerator gerava cantos pretos.
+- A facade apontava para um binding inexistente.
+- `composer.json` sem as dependências `illuminate/*` e `laravel/serializable-closure` que o código usa.

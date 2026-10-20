@@ -4,6 +4,7 @@ namespace RiseTechApps\RiseTools\Features\DatabaseSnapshot\Console;
 
 use Illuminate\Console\Command;
 use RiseTechApps\RiseTools\Features\DatabaseSnapshot\DatabaseSnapshot;
+use RiseTechApps\RiseTools\Features\DatabaseSnapshot\Exceptions\ToolNotFoundException;
 
 class SnapshotCreateCommand extends Command
 {
@@ -30,24 +31,21 @@ class SnapshotCreateCommand extends Command
 
             $snapshot->create($name, $callback);
 
-            $this->info("Snapshot '{$name}' criado com sucesso!");
+            $this->info("Snapshot '{$name}' created successfully!");
 
             return self::SUCCESS;
-        } catch (\Exception $e) {
-            $message = $e->getMessage();
+        } catch (ToolNotFoundException $e) {
+            // Só quando o binário realmente não existe (checado antes de rodar).
+            $this->error("❌ Tool not found: {$e->tool} ({$e->client()})");
+            $this->warn("📦 Install the database client:");
 
-            // Mensagem amigável para ferramentas não instaladas
-            if (str_contains($message, 'pg_dump') || str_contains($message, 'mysqldump')) {
-                $tool = str_contains($message, 'pg_dump') ? 'pg_dump (PostgreSQL client)' : 'mysqldump (MySQL client)';
-                $this->error("❌ Tool not found: {$tool}");
-                $this->warn("📦 Install the database client:");
-                $this->line("   Debian/Ubuntu: sudo apt-get install postgresql-client | mysql-client");
-                $this->line("   Alpine: apk add postgresql-client | mysql-client");
-                $this->newLine();
-                $this->warn("🐛 Original error: {$message}");
-            } else {
-                $this->error("Error creating snapshot: {$message}");
+            foreach ($e->installHints() as $system => $command) {
+                $this->line("   {$system}: {$command}");
             }
+
+            return self::FAILURE;
+        } catch (\Exception $e) {
+            $this->error("Error creating snapshot: {$e->getMessage()}");
 
             return self::FAILURE;
         }

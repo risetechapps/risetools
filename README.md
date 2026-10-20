@@ -2,10 +2,21 @@
 
 Pacote de **macros, helpers e utilitários avançados** da [Rise Tech](https://risetech.com.br) para aplicações Laravel.
 
-Inclui agora:
+Inclui:
 
-✨ **AvatarGenerator** — criação automática de avatares circulares com gradiente, iniciais e cores consistentes.  
-Ideal para APIs, dashboards, perfis de usuários e sistemas que precisam de avatares dinâmicos.
+| Recurso | O que faz |
+|---|---|
+| [Macros de resposta JSON](#macros-de-resposta-json) | `jsonSuccess`, `jsonCreated`, `jsonValidation`, `jsonForbidden`... e renderer de exceções no mesmo envelope |
+| [AvatarGenerator](#-avatargenerator) | Avatar circular com gradiente e iniciais, em PNG ou SVG |
+| [MaskInput](#maskinput) | Máscaras livres e presets de CPF, CNPJ (inclusive alfanumérico), CEP e telefone |
+| [Device](#device) | Dispositivo, navegador, IP do cliente e geolocalização |
+| [Domain](#domain) | Domínio registrável, DNS, SSL, WHOIS |
+| [EmailValidator](#emailvalidator) | Formato, MX, descartável, genérico, SMTP e regras de validação |
+| [AtomicJobChain](#atomicjobchain) | Cadeia de jobs que para na primeira falha |
+| [NPlusOneDetector](#nplusonedetector) | Detecta N+1 em tempo de execução |
+| [DatabaseSnapshot](#databasesnapshot) | Snapshot/restore do banco (MySQL, PostgreSQL, SQLite) em qualquer disco |
+| [DatabaseHealthMonitor](#databasehealthmonitor) | `risetools:db-health`: problemas de schema e índices |
+| [Doctor](#doctor) | `risetools:doctor` e rotas `/health/live` e `/health/ready` |
 
 > Compatível com **Laravel 12+** e **PHP 8.4+**
 
@@ -21,6 +32,57 @@ Ideal para APIs, dashboards, perfis de usuários e sistemas que precisam de avat
 ```bash
 composer require risetechapps/risetools
 ```
+
+O service provider e a facade são registrados automaticamente (package discovery).
+
+Para customizar a config (opcional, tudo também funciona por `.env`):
+
+```bash
+php artisan vendor:publish --tag=risetools-config   # cria config/risetools.php
+```
+
+### Facade `RiseTools`
+
+Uma porta de entrada para todas as features:
+
+```php
+use RiseTools;
+
+RiseTools::avatar()->generateSvg('Ana Souza');
+RiseTools::domain('app.example.com')->getInfo(3600);
+RiseTools::email()->isDisposable($email);
+RiseTools::device(false);                 // Device::info(false)
+RiseTools::clientIp();                    // Device::getClientPublicIp()
+RiseTools::mask()->cpf('12345678901');
+RiseTools::snapshot()->create('base');
+RiseTools::dbHealth()->run();
+RiseTools::nPlusOne();
+RiseTools::doctor()->addCheck('payments', fn() => 'ok');
+```
+
+Os helpers (`email_validator()`, `database_snapshot()`, `MaskInput()`...) continuam funcionando.
+
+```bash
+composer require risetechapps/risetools:^1.0
+```
+
+A 1.0 muda comportamentos das versões de teste por segurança e LGPD. Antes de atualizar:
+
+1. **TrustProxies**: `Device::getClientPublicIp()` passou a usar `request()->ip()`. Atrás de proxy, load balancer ou Cloudflare, configure os proxies confiáveis, senão o IP registrado será o do proxy:
+   ```php
+   // bootstrap/app.php
+   ->withMiddleware(function (Middleware $middleware) {
+       $middleware->trustProxies(at: ['10.0.0.0/8']); // IPs/CIDRs dos seus proxies
+   })
+   ```
+   Atenção: `$middleware->use([...])` **substitui** a pilha global inteira (TrustProxies junto). Prefira `append`/`prepend`.
+2. **Geolocalização desligada por padrão**: para manter, `RISETOOLS_GEOIP_ENABLED=true`.
+3. **`?agent=` removido**: o user agent vem só do header do request.
+4. **Respostas JSON**: `jsonSuccess([])` devolve `"data": []` (antes omitia `data`); Resources paginadas trazem `meta` e `links`; `jsonGone()` tem a mensagem padrão `Resource no longer available.`.
+5. **Comandos**: `risetools:db-health --json/--export` saem com código `1` quando há problemas; o check `nullable_without_default` foi removido.
+6. **Classes renomeadas**: `Features\HealthCheck\HealthCheckCommand` → `DoctorCommand` e `Features\DatabaseHealthMonitor\Console\HealthCheckCommand` → `DatabaseHealthCommand` (os nomes dos comandos no artisan não mudaram).
+
+Detalhes no [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -79,7 +141,7 @@ Utilizada para retornar um erro de processamento ou de entidade não processáve
     return response()->jsonError('Os dados fornecidos são inválidos.', ['errors' => ['field' => 'required']]);
     ```
 
-#### 3. `response()->jsonGone($message = 'Recurso não disponível.', $data = null)`
+#### 3. `response()->jsonGone($message = 'Resource no longer available.', $data = null)`
 
 Utilizada para indicar que o recurso solicitado não está mais disponível e não será novamente.
 
@@ -120,11 +182,71 @@ Utilizada para indicar um erro interno do servidor.
 
 ***
 
+#### 6. Outras macros
+
+| Macro | Status | Mensagem padrão |
+|---|---|---|
+| `jsonCreated($data = null, $message)` | 201 | `Resource created successfully.` |
+| `jsonNoContent($headers = [])` | 204 | sem corpo (204 não pode ter corpo) |
+| `jsonUnauthorized($message, $data = null)` | 401 | `Unauthenticated.` |
+| `jsonForbidden($message, $data = null)` | 403 | `This action is unauthorized.` |
+| `jsonValidation($errors, $message)` | 422 | `The given data was invalid.` |
+
+`jsonValidation()` aceita array ou `MessageBag` e mantém o formato de erros do Laravel:
+
+```php
+return response()->jsonValidation($validator->errors());
+```
+
+```json
+{ "success": false, "code": 422, "message": "The given data was invalid.", "errors": { "email": ["The email field is required."] } }
+```
+
+***
+
 ### Macro Base (Interna)
 
 A macro `jsonBase` é a implementação interna utilizada por todas as outras macros e não deve ser chamada diretamente em seu código de aplicação.
 
 `response()->jsonBase(bool $success, string $message = null, array|JsonResource $data = null, int $code = Response::HTTP_OK)`
+
+### Resources e listas vazias
+
+- `JsonResource` passa pelo mesmo caminho do Laravel (`->response()`): `with()`, `additional()` e, em coleções paginadas, `meta` e `links` ficam no mesmo nível de `data`, sem sobrescrever `success`/`code`/`message`.
+- `null` omite `data`; `[]` vira `"data": []`.
+
+```php
+return response()->jsonSuccess(UserResource::collection(User::paginate(15)));
+```
+
+```json
+{
+    "success": true,
+    "code": 200,
+    "message": "Operation completed successfully.",
+    "data": [{ "id": 1 }],
+    "links": { "first": "...", "last": "...", "prev": null, "next": "..." },
+    "meta": { "current_page": 1, "last_page": 7, "per_page": 15, "total": 100 }
+}
+```
+
+### Exceções no mesmo envelope (opcional)
+
+Para 401, 403, 404, 422, 429, 500 etc. saírem no formato `success/code/message/data` sem chamar macro em cada controller:
+
+```php
+// bootstrap/app.php
+use RiseTechApps\RiseTools\Http\JsonExceptionRenderer;
+
+->withExceptions(function (Exceptions $exceptions) {
+    JsonExceptionRenderer::register($exceptions);
+})
+```
+
+- Vale para requests que esperam JSON ou em `api/*`; outra regra: `JsonExceptionRenderer::register($exceptions, fn ($request, $e) => $request->is('v1/*'))`.
+- Validação vira `jsonValidation()` (com `errors`); `ModelNotFoundException` vira `Resource not found.` (sem expor a classe do model); headers de `HttpException` (ex.: `Retry-After` no 429) são mantidos.
+- Erro 500 sai como `Internal server error.`; com `APP_DEBUG=true`, `data` traz classe, mensagem, arquivo, linha e trace.
+- O report (log) das exceções não muda.
 
 ---
 
@@ -138,6 +260,8 @@ O **AvatarGenerator** permite gerar imagens de avatar totalmente automáticas co
 - ✔ Fundo circular com transparência
 - ✔ Retorno como PNG binário
 - ✔ Retorno Base64 (ideal para API)
+- ✔ Retorno em **SVG** (sem GD, escala sem perder qualidade)
+- ✔ Cor do texto (branco ou cinza-escuro) escolhida pelo contraste com o gradiente (WCAG)
 - ✔ Salvamento como arquivo
 - ✔ Salvamento via Laravel Storage
 
@@ -167,6 +291,19 @@ return [
     'avatar' => $avatar->generateBase64('Mateus Soares'),
 ];
 ```
+
+---
+
+### ➤ Gerar avatar em SVG
+
+```php
+$svg = $avatar->generateSvg('Mateus Soares', 128);          // string <svg ...>
+$uri = $avatar->generateSvgDataUri('Mateus Soares');        // data:image/svg+xml;base64,...
+
+return response($svg)->header('Content-Type', 'image/svg+xml');
+```
+
+Mesmas cores e iniciais do PNG. Não precisa de GD; o texto usa a fonte do navegador (Roboto, se houver).
 
 ---
 
@@ -209,7 +346,7 @@ As iniciais são extraídas automaticamente:
 
 ## 🛠️ Tecnologias Utilizadas
 
-- PHP GD / FreeType
+- PHP GD / FreeType (só para PNG; SVG não precisa)
 - Nenhuma dependência externa
 - Totalmente stateless
 
@@ -234,6 +371,27 @@ echo $result;
 echo MaskInput('12345678901', '###.###.###-##');
 // 123.456.789-01
 ```
+
+### Presets
+
+Aceitam o valor com ou sem formatação. **Só formatam**: validação de CPF/CNPJ fica com o `form-request-for-laravel`.
+
+```php
+$mask = RiseTools::mask(); // ou new MaskInput()
+
+$mask->cpf('12345678901');            // 123.456.789-01
+$mask->cnpj('12345678000190');        // 12.345.678/0001-90
+$mask->cnpj('12abc34501de35');        // 12.ABC.345/01DE-35 (CNPJ alfanumérico)
+$mask->document('12345678901');       // CPF ou CNPJ, pelo tamanho
+$mask->cep('01310100');               // 01310-100
+$mask->phone('1134567890');           // (11) 3456-7890
+$mask->phone('11912345678');          // (11) 91234-5678
+$mask->phone('5511912345678');        // +55 (11) 91234-5678
+$mask->unmask('123.456.789-01');      // 12345678901 (mantém letras, em maiúsculas)
+```
+
+Constantes com as máscaras: `MaskInput::CPF`, `CNPJ`, `CEP`, `PHONE`, `MOBILE`.
+
 ---
 
 ## 🧩 Como funciona
@@ -255,7 +413,7 @@ echo MaskInput('12345678901', '###.###.###-##');
 # Device
 O utilitário para **detecção de informações do dispositivo, navegador, plataforma e geolocalização por IP** em aplicações Laravel.
 
-Este recurso utiliza o pacote `hisorange/browser-detect` para identificar o ambiente do usuário e a API pública `ip-api.com` para dados de geolocalização.
+Este recurso utiliza o pacote `hisorange/browser-detect` para identificar o ambiente do usuário (pelo header `User-Agent` do request) e, se habilitada, a API pública `ip-api.com` para dados de geolocalização.
 
 ---
 
@@ -266,10 +424,14 @@ Este recurso utiliza o pacote `hisorange/browser-detect` para identificar o ambi
 ```php
 use RiseTechApps\RiseTools\Features\Device\Device;
 
-$info = Device::info();
+$info = Device::info();       // com geo (se RISETOOLS_GEOIP_ENABLED=true)
+$info = Device::info(false);  // sem geo: use no caminho de cada request
 
 dd($info);
 ```
+
+Lê tudo do `request()` corrente (sem `$_SERVER`/`$_GET`), então funciona no Octane.
+
 ---
 
 ## 📌 Retorno do método `info()`
@@ -305,26 +467,32 @@ O método retorna um array com as seguintes informações:
 
 ## 🌍 Geolocalização por IP
 
-A geolocalização é obtida através do serviço público:
+**Desligada por padrão.** O IP do usuário sai para um terceiro (LGPD), por HTTP sem TLS no plano gratuito do ip-api. Para ligar:
 
-- **ip-api.com**
+```dotenv
+RISETOOLS_GEOIP_ENABLED=true
+```
 
-O resultado é **cacheado por IP durante 24h** (via `Cache` do Laravel) e a chamada HTTP usa timeout (connect 2s / total 4s), evitando travar a request. Apenas respostas `status: success` são cacheadas.
+- Resultado **cacheado por IP durante 24h**; falha (provedor fora, limite) fica em **cache negativo** por `RISETOOLS_GEOIP_FAILURE_TTL` minutos (10), para não pagar o timeout em todo request.
+- Timeout curto (connect 2s / total 4s).
+- IP privado/reservado (rede interna, localhost) não é consultado.
+- O cache usa um store **sem prefixo** (`RISETOOLS_GEOIP_CACHE_STORE`, padrão: o store default), para o mesmo IP ser reaproveitado entre usuários. Precisa ser persistente (não `array`).
+- O ip-api gratuito tem limite de ~45 req/min e uso não comercial; `RISETOOLS_GEOIP_URL` troca o provedor (`{ip}` é substituído).
 
-⚠️ Observação:
-- O serviço possui limites de requisição (~45 req/min no plano gratuito)
-- O cache por IP reduz drasticamente o número de chamadas, mas requer um driver de cache persistente (não `array`)
+Com o geo desligado, `geo_ip` vem com todos os campos vazios.
 
 ---
 
 ## 🧠 Detecção de IP do Cliente
 
-O método tenta identificar corretamente o IP público considerando:
+`Device::getClientPublicIp()` devolve `request()->ip()`. Headers como `X-Forwarded-For` e `X-Real-IP` são escritos pelo cliente e só valem quando chegam de um **proxy confiável** — quem decide é o TrustProxies do Laravel:
 
-- Cloudflare (`HTTP_CF_CONNECTING_IP`)
-- Proxy reverso (`X-Forwarded-For`)
-- IP real (`REMOTE_ADDR`)
-- Fallback para `request()->ip()`
+```php
+// bootstrap/app.php
+$middleware->trustProxies(at: ['10.0.0.0/8', '172.16.0.0/12']);
+```
+
+**Cloudflare**: o header `CF-Connecting-IP` só é lido com `RISETOOLS_TRUST_CLOUDFLARE_HEADER=true`. Ligue apenas se a origem aceita tráfego **só** da Cloudflare (firewall com os IPs dela ou Authenticated Origin Pulls); senão qualquer um forja o header acessando o servidor direto. Alternativa sem essa opção: incluir os [IPs da Cloudflare](https://www.cloudflare.com/ips/) no `trustProxies`.
 
 ---
 
@@ -345,13 +513,7 @@ Este recurso faz parte do ecossistema **RiseTools** e foi projetado para uso em 
 
 ---
 
-## 📦 Instalação
-
-Instale as dependências necessárias via Composer:
-
-```bash
-composer require spatie/dns jeremykendall/php-domain-parser iodev/whois
-```
+As dependências (`spatie/dns`, `jeremykendall/php-domain-parser`, `io-developer/php-whois`) já vêm com o pacote.
 
 > O pacote utiliza a lista oficial do Public Suffix (`publicsuffix.org`).
 
@@ -434,12 +596,15 @@ Retorno esperado:
 
 ```php
 [
-    'status' => true,
+    'status' => true,        // conseguiu ler o certificado
     'issuer' => 'Let\'s Encrypt',
     'expires_at' => '2025-01-01 12:00:00',
-    'is_expired' => false
+    'is_expired' => false,   // passou da validade
+    'is_trusted' => true,    // cadeia e nome conferem
 ]
 ```
+
+Certificado expirado, autoassinado ou com nome errado ainda é lido (`status: true`), com `is_trusted: false` e, se for o caso, `is_expired: true`. Sem conexão TLS: `['status' => false, 'expires_at' => null]`.
 
 ---
 
@@ -475,8 +640,11 @@ $domain->getWhoisExpiration();
 ## 📊 Informações Completas do Domínio
 
 ```php
-$domain->getInfo();
+$domain->getInfo();      // consulta tudo agora
+$domain->getInfo(3600);  // guarda o resultado no cache do Laravel por 1h
 ```
+
+São várias consultas de rede (DNS, SSL, WHOIS). Dentro da mesma instância cada uma sai uma vez só (chamar `getSslInfo()` e depois `getInfo()` não repete o handshake); entre requests, use o parâmetro de cache.
 
 Retorno:
 
@@ -496,7 +664,7 @@ Retorno:
 ]
 ```
 
-> `fullUrl` usa `https` apenas quando há certificado SSL válido; caso contrário, é igual a `url` (`http`).
+> `fullUrl` usa `https` apenas quando o certificado é confiável e está dentro da validade; caso contrário, é igual a `url` (`http`).
 
 ---
 
@@ -673,7 +841,7 @@ n_plus_one_detector()->threshold(5)->suggestEagerLoading()->reportToLog();
 Quando um N+1 é detectado, um aviso como este vai para o log:
 
 ```
-[N+1 Query] 8 queries detected for table 'posts'. Adicione ->with(['relation']) ao carregar Post
+[N+1 Query] 5 queries detected for table 'posts'. Eager load the relationship that returns Post on the parent query: ->with('<relation>')
 ```
 
 ## 📊 Estatísticas
@@ -710,23 +878,264 @@ Se o SDK do Sentry estiver presente, `reportToSentry()` envia o contexto (`table
 ## ⚠️ Cuidados
 
 - **Ferramenta de desenvolvimento/diagnóstico.** Ative em `local`/`staging`. Em produção, use `sampleRate` baixo (ex.: `0.05`) — cada padrão novo captura um `debug_backtrace` (custo).
-- **Estado interno é estático.** Em runtimes persistentes (Octane/Swoole) os contadores acumulam entre requests; chame `clearStats()`/`disable()` conforme o ciclo do worker.
+- **Estado interno é estático**, mas é zerado automaticamente no início de cada job da fila (`JobProcessing`) e de cada request do Octane (`RequestReceived`). Chamar `enable()` de novo não registra outro listener.
 - **Apenas detecta** — não altera queries nem código. Emite aviso + sugestão.
+- O detector não sabe qual relação foi acessada: a sugestão usa `<relation>` como marcador.
+
+### NPlusOneDetector ou `Model::preventLazyLoading()`?
+
+| | `Model::preventLazyLoading()` | `NPlusOneDetector` |
+|---|---|---|
+| Como detecta | Exceção no primeiro lazy load de relação | Padrão de SQL repetido acima do limite |
+| Queries fora do Eloquent (`DB::`, query builder, loops manuais) | Não | Sim |
+| Diz qual relação | Sim | Não (só a tabela) |
+| Produção | Só como log (`handleLazyLoadingViolationUsing`) | Sim, com `sampleRate` |
+
+Em desenvolvimento, `preventLazyLoading()` é o mais preciso para Eloquent; o detector complementa pegando N+1 de query builder e permite amostragem em produção.
+
+---
+
+# EmailValidator
+
+```php
+$validator = email_validator();
+
+$validator->isValidFormat('ana@example.com');   // formato (filter_var)
+$validator->hasValidMxRecords('ana@example.com'); // MX (ou registro A)
+$validator->isValid('ana@example.com');          // formato + MX
+$validator->isDisposable('x@mailinator.com');    // domínio descartável (inclui subdomínios)
+$validator->isRoleBased('contato@empresa.com');  // e-mail genérico
+$validator->getInfo('ana@example.com');          // tudo acima num array
+```
+
+`isRoleBased()` exige o termo inteiro ou seguido de `.`, `_`, `+`, `-` ou dígito: `rh@`, `rh.sp@` e `suporte2@` são genéricos; `rhaissa@` e `informatica@` não.
+
+### Regras de validação
+
+```php
+use RiseTechApps\RiseTools\Features\EmailValidator\Rules\NotDisposableEmail;
+use RiseTechApps\RiseTools\Features\EmailValidator\Rules\NotRoleBasedEmail;
+
+'email' => ['required', 'email', new NotDisposableEmail(), new NotRoleBasedEmail()],
+'email' => [new NotDisposableEmail('Use um e-mail permanente.')], // mensagem própria
+```
+
+### Lista de descartáveis
+
+A lista embutida é pequena (21 domínios). Para a lista completa (milhares de domínios, do projeto [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains)):
+
+```bash
+php artisan risetools:email-disposable-update
+```
+
+Grava em `storage/app/risetools/disposable_domains.txt` (`RISETOOLS_DISPOSABLE_LIST_PATH`), que é recarregado sozinho quando muda. Download com menos de 100 domínios (página de erro, lista truncada) é recusado e a lista atual fica. Agende para manter atualizada:
+
+```php
+Schedule::command('risetools:email-disposable-update')->weekly();
+```
+
+Domínios extras: `risetools.email.disposable_domains` (publique a config). Subdomínios contam: `x@eu.mailinator.com` é descartável.
+
+### Cache de DNS
+
+Os lookups de MX/A são cacheados por domínio por `RISETOOLS_EMAIL_DNS_CACHE` minutos (60; `0` desliga), num store sem prefixo dinâmico (`RISETOOLS_EMAIL_CACHE_STORE`). Um cadastro em massa do mesmo domínio faz uma consulta só.
+
+### Verificação SMTP
+
+```php
+$validator->verifySmtp('ana@example.com', timeout: 10, from: 'verify@seudominio.com');
+// ['email' => ..., 'verified' => bool, 'smtp_code' => 250|550|..., 'message' => ..., 'server' => banner]
+```
+
+Conversa `HELO` → `MAIL FROM` → `RCPT TO` com o MX de maior prioridade, lendo respostas multi-linha inteiras e exigindo `250` em cada etapa.
+
+> ⚠️ Muitos servidores bloqueiam ou mentem nessa verificação (anti-enumeração) e muitas nuvens bloqueiam a porta 25 de saída. Trate o resultado como indício, não como prova.
+
+---
+
+# DatabaseSnapshot
+
+Snapshot e restore do banco da conexão padrão. Suporta **PostgreSQL** (`pg_dump`/`psql`), **MySQL** (`mysqldump`/`mysql`) e **SQLite** (backup API).
+
+```bash
+php artisan risetools:snapshot-create base          # --seed roda db:seed antes
+php artisan risetools:snapshot-list
+php artisan risetools:snapshot-restore base
+php artisan risetools:snapshot-delete base
+```
+
+```php
+database_snapshot()->create('base');
+database_snapshot()->restore('base');
+database_snapshot()->exists('base');
+database_snapshot()->list();   // [['name', 'size', 'created_at', 'driver'], ...]
+database_snapshot()->delete('base');
+database_snapshot()->purge();  // remove todos
+```
+
+Em testes, a trait `Features\DatabaseSnapshot\Traits\InteractsWithSnapshots` oferece `createSnapshot()`, `restoreSnapshot()` e `withSnapshot()`.
+
+### Como funciona
+
+- **Qualquer disco do Laravel** (`RISETOOLS_SNAPSHOT_DISK`, inclusive S3): o dump vai para um arquivo temporário local, direto da ferramenta (`--result-file`/`--file`, sem passar pela memória do PHP), e é enviado por stream. O restore baixa por stream para um temporário. Temporários são apagados no fim.
+- **PostgreSQL**: o dump é gerado com `--clean --if-exists` e o restore roda em **uma transação** com `ON_ERROR_STOP`: qualquer erro faz rollback e o banco atual fica intacto. Snapshots antigos (sem `--clean`) continuam funcionando: os dados do schema atual são truncados antes da carga.
+- **MySQL**: a senha vai pela variável `MYSQL_PWD`, não pela linha de comando (não aparece no `ps`).
+- **Ferramenta ausente**: se o cliente do banco não estiver no `PATH`, o comando avisa qual instalar, antes de tocar no banco. Erros da ferramenta (senha errada etc.) aparecem com a mensagem original.
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install postgresql-client        # ou default-mysql-client
+# Alpine
+apk add postgresql-client                      # ou mysql-client
+```
+
+> Use a mesma versão major do servidor (ou maior) para `pg_dump`.
+
+---
+
+# DatabaseHealthMonitor
+
+```bash
+php artisan risetools:db-health                      # todas as tabelas
+php artisan risetools:db-health --table=users        # só uma tabela
+php artisan risetools:db-health --severity=critical  # critical | warning | info
+php artisan risetools:db-health --json               # relatório JSON (só o JSON na saída)
+php artisan risetools:db-health --export=report.json
+```
+
+Sai com código `1` quando há problema `critical` ou `warning` (útil em CI). Filtros valem também para o resumo, `--json` e `--export`.
+
+| Check | Severidade | Drivers |
+|---|---|---|
+| Tabela sem chave primária | critical | todos |
+| Auto increment perto do limite | critical | MySQL, PostgreSQL |
+| Índices duplicados (mesmas colunas, **mesma ordem**; ignora parciais e de expressão) | warning | MySQL, PostgreSQL |
+| Coluna `*_id` sem índice | warning | MySQL, PostgreSQL |
+| JSON em tabela com 1M+ linhas, ENUM grande, índice em VARCHAR longo | warning | MySQL (VARCHAR longo também PostgreSQL) |
+| Sem `created_at`/`updated_at` | info | todos |
+| Índices possivelmente sem uso (nunca inclui UNIQUE/PK) | info | MySQL, PostgreSQL |
+
+No PostgreSQL tudo é filtrado pelo `current_schema()`, ou seja, segue o `search_path` da conexão. O driver vem da config da conexão (`database.connections.{nome}.driver`), então conexões com qualquer nome funcionam.
+
+Checks próprios:
+
+```php
+db_health_monitor()->addCheck(function (string $table) {
+    return $table === 'legacy' ? ['table' => $table, 'type' => 'legacy', 'severity' => 'warning', 'message' => '...'] : null;
+});
+```
+
+---
+
+# Doctor
+
+```bash
+php artisan risetools:doctor
+php artisan risetools:doctor --only=database,cache,queue
+php artisan risetools:doctor --disk=s3 --mailer=smtp --min-disk-gb=5 --max-failed-jobs=10
+php artisan risetools:doctor --json                  # só o JSON: {"healthy": bool, "checks": [...]}
+```
+
+Checks: `security` (APP_KEY, APP_DEBUG em produção), `config` (cache em produção), `database`, `migrations` (pendentes), `redis`, `cache` (escrita e leitura), `storage` (escrita e leitura no disco), `disk` (espaço livre), `queue` (alcança o broker), `failed-jobs` (contagem via `count()`), `smtp` (handshake), `scheduler` (heartbeat), `horizon` (supervisores rodando).
+
+Sem `--only`:
+- `redis` só roda se cache, fila, sessão ou broadcast usarem Redis;
+- `scheduler` e `horizon` só rodam em produção (e `horizon` só com o Horizon instalado).
+
+Sai com código `1` se algum check falhar.
+
+### Scheduler
+
+O pacote agenda um heartbeat a cada minuto (`risetools:scheduler-heartbeat`, desligue com `RISETOOLS_SCHEDULER_HEARTBEAT=false`). O check `scheduler` falha se o último tem mais de `RISETOOLS_SCHEDULER_MAX_AGE` minutos (5) ou `--scheduler-max-age`, ou seja, se o `schedule:run` parou. O store precisa ser compartilhado entre o scheduler e quem roda o doctor (`RISETOOLS_HEALTH_CACHE_STORE`; não `array`).
+
+### Checks próprios
+
+```php
+// Num ServiceProvider:
+RiseTools::doctor()->addCheck('payments', function (array $options) {
+    $ok = PaymentGateway::ping();
+    if (!$ok) {
+        throw new RuntimeException('Gateway unreachable.');
+    }
+
+    return 'gateway up';
+});
+```
+
+Ou por config (`risetools.health.checks`): `'payments' => App\Health\PaymentsCheck::class` (classe invocável, recebe `array $options`). Checks próprios rodam por padrão e aceitam `--only=payments`.
+
+### Rotas de health (orquestrador / load balancer)
+
+Desligadas por padrão. Com `RISETOOLS_HEALTH_ROUTE=true`:
+
+| Rota | O que faz |
+|---|---|
+| `GET /health/live` | 200 sempre que o processo responde. Não toca em banco nem expõe nada. |
+| `GET /health/ready` | Roda `risetools.health.route.checks` (padrão `database`, `cache`): 200 ou 503. |
+
+```dotenv
+RISETOOLS_HEALTH_ROUTE=true
+RISETOOLS_HEALTH_PATH=health
+RISETOOLS_HEALTH_TOKEN=um-segredo-longo         # header X-Health-Token ou Authorization: Bearer
+RISETOOLS_HEALTH_ALLOWED_IPS=10.0.0.0/8,127.0.0.1
+```
+
+Sem token nem IPs configurados, o `/ready` responde só ok/falhou por check. Com eles, quem não passa recebe 403 e quem passa vê o detalhe de cada check. Mantenha os checks do `/ready` rápidos: ele roda a cada probe.
+
+---
+
+## ⚙️ Configuração
+
+Todas por `.env`:
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `RISETOOLS_GEOIP_ENABLED` | `false` | Liga a geolocalização no `Device::info()` |
+| `RISETOOLS_GEOIP_URL` | `http://ip-api.com/json/{ip}` | Provedor de geo |
+| `RISETOOLS_GEOIP_CONNECT_TIMEOUT` / `RISETOOLS_GEOIP_TIMEOUT` | `2` / `4` | Timeouts (s) |
+| `RISETOOLS_GEOIP_FAILURE_TTL` | `10` | Cache negativo de falha (min) |
+| `RISETOOLS_GEOIP_CACHE_STORE` | store padrão | Store do cache de geo |
+| `RISETOOLS_TRUST_CLOUDFLARE_HEADER` | `false` | Lê `CF-Connecting-IP` |
+| `RISETOOLS_SNAPSHOT_DISK` | `local` | Disco dos snapshots |
+| `RISETOOLS_SNAPSHOT_PATH` | `snapshots` | Pasta dentro do disco |
+| `RISETOOLS_SCHEDULER_HEARTBEAT` | `true` | Agenda o heartbeat do scheduler |
+| `RISETOOLS_SCHEDULER_MAX_AGE` | `5` | Idade máxima do heartbeat (min) |
+| `RISETOOLS_HEALTH_CACHE_STORE` | store padrão | Store do heartbeat |
+| `RISETOOLS_HEALTH_ROUTE` | `false` | Liga `/health/live` e `/health/ready` |
+| `RISETOOLS_HEALTH_PATH` | `health` | Prefixo das rotas de health |
+| `RISETOOLS_HEALTH_TOKEN` | — | Token do `/health/ready` |
+| `RISETOOLS_HEALTH_ALLOWED_IPS` | — | IPs/CIDRs liberados no `/health/ready` (vírgula) |
+| `RISETOOLS_EMAIL_DNS_CACHE` | `60` | Cache de MX/A por domínio (min; `0` desliga) |
+| `RISETOOLS_EMAIL_CACHE_STORE` | store padrão | Store do cache de DNS |
+| `RISETOOLS_DISPOSABLE_LIST_PATH` | `storage/app/risetools/disposable_domains.txt` | Lista de descartáveis baixada |
+| `RISETOOLS_DISPOSABLE_LIST_URL` | disposable-email-domains (GitHub) | Origem da lista |
+
+Arrays (checks próprios, checks do `/ready`, middleware das rotas, domínios descartáveis extras) ficam na config publicada (`php artisan vendor:publish --tag=risetools-config`).
 
 ---
 
 ## 🛠️ Requisitos
 
-| Dependência | Versão mínima |
+| Dependência | Versão / observação |
 |--------------|----------------|
-| PHP | 8.4 |
+| PHP | 8.4 (`ext-openssl`) |
 | Laravel | 12.x |
-| GD + FreeType | required |
-| Orchestra Testbench | 10.x |
-| PHPUnit | 11.x |
-| jeremykendall/php-domain-parser | 6.0 |
-| spatie/dns | 2.8.1 |
-| io-developer/php-whois | 4.1.10 |
+| `ext-gd` (com FreeType) | AvatarGenerator |
+| `ext-sqlite3` | DatabaseSnapshot em SQLite |
+| `ext-intl` | Recomendado para domínios IDN |
+| `pg_dump`/`psql` ou `mysqldump`/`mysql` | DatabaseSnapshot em PostgreSQL / MySQL |
+
+---
+
+## 🧪 Testes
+
+```bash
+composer test                     # suíte padrão (SQLite)
+vendor/bin/phpunit --group network # testes que acessam a internet (badssl.com)
+RISETOOLS_TEST_PGSQL=1 vendor/bin/phpunit  # inclui PostgreSQL (DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD)
+```
+
+Testes de snapshot em SQLite precisam de `ext-sqlite3`; os de PostgreSQL, de `pg_dump`/`psql` no `PATH`. Sem eles, são pulados. O CI (GitHub Actions) sobe um PostgreSQL 16 e roda tudo.
 
 ---
 
