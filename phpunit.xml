@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true">
+    <testsuites>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <groups>
+        <exclude>
+            <!-- Chamadas de rede externas (badssl.com): rodar com - -group network. -->
+            <group>network</group>
+        </exclude>
+    </groups>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:2fl+Ktvkfl+Fuz4Qp/A75G2RTiWVA/ZoKZvp6fiiM10="/>
+        <!--
+            Testes de PostgreSQL (tests/Feature/Postgres) só rodam com
+            RISETOOLS_TEST_PGSQL=1 e um servidor acessível (o CI sobe um).
+        -->
+        <env name="DB_HOST" value="127.0.0.1" force="false"/>
+        <env name="DB_PORT" value="5432" force="false"/>
+        <env name="DB_DATABASE" value="risetools_test" force="false"/>
+        <env name="DB_USERNAME" value="postgres" force="false"/>
+        <env name="DB_PASSWORD" value="postgres" force="false"/>
+    </php>
+</phpunit>
