@@ -3,7 +3,9 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
-## [Não lançado]
+## [1.1.0] - 2026-10-25
+
+Compatível com a 1.0: só adiciona recurso.
 
 ### AtomicJobChain: retomar de onde parou
 - Novo `->skipWhen(fn (string $jobClass, array $passable): bool)`, par do `onStepComplete`: consultado antes de cada Job; `true` (estrito) pula o Job. A fila (ex.: Horizon com `tries` > 1) reexecuta a cadeia a partir do payload original, e sem isso a nova tentativa recomeçava do primeiro Job, refazendo o que já tinha dado certo.
