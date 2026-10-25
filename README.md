@@ -741,6 +741,27 @@ AtomicJobChain::make([...])
     ->toListener();
 ```
 
+### 3. Retomar de onde parou (`onStepComplete` + `skipWhen`)
+
+Quando a fila tenta de novo (ex.: Horizon com `tries` > 1), ela reexecuta a cadeia **a partir do payload original**. Sem `skipWhen`, a nova tentativa recomeça do primeiro Job e refaz o que já tinha dado certo (criar banco, mandar e-mail...).
+
+| Método | Descrição | Argumentos Recebidos |
+| :--- | :--- | :--- |
+| `->onStepComplete(callable $callback)` | Executado após cada Job concluído. Grave aqui o checkpoint. | `string $jobClass`, `array $passable` |
+| `->skipWhen(callable $callback)` | Consultado antes de cada Job; retornar `true` (estrito) pula o Job. | `string $jobClass`, `array $passable` |
+
+```php
+AtomicJobChain::make([CreateDatabaseJob::class, MigrateDatabaseJob::class, WelcomeJob::class])
+    ->send(fn (TenantCreated $event) => $event->tenant)
+    ->onStepComplete(fn (string $jobClass, array $passable) => Checkpoint::record($passable[0], $jobClass))
+    ->skipWhen(fn (string $jobClass, array $passable) => Checkpoint::done($passable[0], $jobClass))
+    ->toListener();
+```
+
+- O checkpoint precisa ser **persistente** (banco) e lido de lá no `skipWhen`: o `passable` é a foto do momento do dispatch e não vê o que a tentativa anterior gravou.
+- Job em Closure sempre roda (não tem identidade estável).
+- O `skipWhen` só pula passos **concluídos**. Um Job que falhou no meio roda de novo inteiro, então ele mesmo precisa ser seguro para rodar duas vezes.
+
 ## 📊 Monitoramento com Laravel Horizon
 
 O `AtomicJobChain` implementa o método `displayName()`, garantindo que o painel do Horizon exiba um nome descritivo em vez do nome da classe.

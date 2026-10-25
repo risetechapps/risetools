@@ -90,6 +90,14 @@ class AtomicJobChain implements ShouldQueue
     public $onStepComplete;
 
     /**
+     * Callback consultado antes de cada Job: true = pular (passo já concluído).
+     * Recebe: (string $jobClass, mixed $passable)
+     *
+     * @var callable|null
+     */
+    public $skipWhen;
+
+    /**
      * Construtor da cadeia de Jobs.
      *
      * @param array $jobs A lista de Jobs a serem executados.
@@ -209,6 +217,27 @@ class AtomicJobChain implements ShouldQueue
     }
 
     /**
+     * Define quando um Job da cadeia deve ser pulado — par do onStepComplete
+     * para retomar de onde parou.
+     *
+     * A fila (ex.: Horizon com tries > 1) reexecuta a cadeia a partir do payload
+     * original: sem isto, a nova tentativa recomeçava do primeiro Job e refazia
+     * o que já tinha dado certo. O callback deve consultar um registro
+     * PERSISTENTE (banco), nunca o passable — ele é a foto do dispatch.
+     *
+     * Só vale para Jobs de classe: Closure não tem identidade estável e sempre
+     * roda. Se a mesma classe aparecer duas vezes na cadeia, o callback decide
+     * pelas duas.
+     */
+    public function skipWhen(callable $callback): self
+    {
+        $this->skipWhen = $callback instanceof \Closure
+            ? new SerializableClosure($callback)
+            : $callback;
+        return $this;
+    }
+
+    /**
      * Executa a cadeia de Jobs.
      *
      * @throws Throwable
@@ -233,6 +262,20 @@ class AtomicJobChain implements ShouldQueue
                 };
 
                 try {
+                    // Passo já concluído numa tentativa anterior (skipWhen).
+                    if ($this->skipWhen && $jobClass !== 'Closure' && !($job instanceof Closure)
+                        && app()->call($this->skipWhen, [
+                            'jobClass' => $jobClass,
+                            'passable' => is_array($this->passable) ? $this->passable : [],
+                        ]) === true
+                    ) {
+                        if (app()->runningInConsole()) {
+                            $output->writeln("<comment>  " . now() . " - Skipping JOB (already done): {$jobClass}</comment>");
+                        }
+
+                        continue;
+                    }
+
                     // Instancia o Job se vier como string de classe
                     if (is_string($job)) {
                         $passable = is_array($this->passable) ? $this->passable : (array)$this->passable;

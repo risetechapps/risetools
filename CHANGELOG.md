@@ -3,6 +3,14 @@
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), e este projeto segue o [Versionamento Semântico](https://semver.org/lang/pt-BR/) (SemVer).
 
+## [Não lançado]
+
+### AtomicJobChain: retomar de onde parou
+- Novo `->skipWhen(fn (string $jobClass, array $passable): bool)`, par do `onStepComplete`: consultado antes de cada Job; `true` (estrito) pula o Job. A fila (ex.: Horizon com `tries` > 1) reexecuta a cadeia a partir do payload original, e sem isso a nova tentativa recomeçava do primeiro Job, refazendo o que já tinha dado certo.
+- O callback deve ler um registro **persistente** (banco), nunca o `passable`: ele é a foto do momento do dispatch.
+- Job em Closure sempre roda (sem identidade estável). Sem `skipWhen`, nada muda.
+- Testes: retomada após falha com payload serializado (mesmo caminho do `toListener`), argumentos do callback, só `true` pula e Closure sempre roda.
+
 ## [1.0.0] - 2026-10-20
 
 > **Primeira versão estável.** As versões publicadas antes (1.0.0 a 3.1.0, de nov/2025 a out/2026) eram de teste e foram retiradas; o histórico delas não vale para esta linha. Quem usava uma versão de teste: veja [Migrando das versões de teste](#migrando-das-versões-de-teste--310) abaixo e no README. Pacotes que pediam `^3.1.0` passam a pedir `^1.0`.
